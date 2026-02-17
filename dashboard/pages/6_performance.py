@@ -10,9 +10,57 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from db.models import get_latest_signals, get_transactions, get_backtest_results
+from analysis.accuracy_tracker import run_accuracy_check, get_accuracy_stats
 from dashboard.components.charts import bar_chart, line_chart
 
 st.title("📊 Performance Tracking")
+
+# ── Signal Outcome Verification ──────────────────────────────────────
+st.subheader("Signal Outcome Verification")
+
+vcol1, vcol2 = st.columns([3, 1])
+with vcol2:
+    if st.button("🔄 Verify Signals", type="primary"):
+        with st.spinner("Checking signal outcomes..."):
+            result = run_accuracy_check()
+        st.success(f"Checked {result['checked']} signals | Accuracy: {result['accuracy']:.0%}")
+
+with vcol1:
+    stats = get_accuracy_stats()
+    if stats["total_evaluated"] > 0:
+        acols = st.columns(4)
+        acols[0].metric("Total Evaluated", stats["total_evaluated"])
+        acols[1].metric("Correct", stats["correct"])
+        acols[2].metric("Overall Accuracy", f"{stats['overall_accuracy']:.0%}")
+        acols[3].metric("Sample Size", stats["total_evaluated"])
+
+        # Accuracy by direction
+        st.divider()
+        st.subheader("Accuracy by Direction")
+        dir_data = stats["by_direction"]
+        dcols = st.columns(3)
+        for i, (direction, data) in enumerate(dir_data.items()):
+            icon = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(direction, "⚪")
+            with dcols[i]:
+                st.metric(f"{icon} {direction}", f"{data['accuracy']:.0%}",
+                          f"n={data['total']} | avg 5d: {data['avg_return_5d']:+.2%}")
+
+        # Factor contribution for correct vs incorrect
+        if stats["by_factor"]:
+            st.divider()
+            st.subheader("Factor Scores: Correct vs Incorrect")
+            factor_df = pd.DataFrame(stats["by_factor"]).T
+            if not factor_df.empty:
+                fig_f = go.Figure()
+                for col in factor_df.columns:
+                    fig_f.add_trace(go.Bar(x=factor_df.index, y=factor_df[col], name=col.replace("avg_", "")))
+                fig_f.update_layout(height=350, template="plotly_dark", barmode="group",
+                                    margin=dict(l=50, r=20, t=20, b=20))
+                st.plotly_chart(fig_f, use_container_width=True)
+    else:
+        st.info("No evaluated signals yet. Generate signals and wait 5+ days, then click 'Verify Signals'.")
+
+st.divider()
 
 # ── Signal Accuracy ───────────────────────────────────────────────────
 st.subheader("Signal Accuracy Statistics")

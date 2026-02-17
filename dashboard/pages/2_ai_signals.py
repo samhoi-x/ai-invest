@@ -20,6 +20,7 @@ from dashboard.components.metrics_cards import signal_card
 from dashboard.components.signal_display import factor_breakdown, signal_table
 from dashboard.components.charts import candlestick_chart, line_chart
 from db.models import save_signal, get_latest_signals, get_signal_history
+from data.notifier import notify_signal
 from config import DEFAULT_STOCKS, DEFAULT_CRYPTO
 
 st.title("🤖 AI Trading Signals")
@@ -100,6 +101,10 @@ if generate:
             sentiment_score=combined["sentiment_score"],
             ml_score=combined["ml_score"],
         )
+
+        # Send Telegram notification (if configured)
+        if combined["direction"] in ("BUY", "SELL"):
+            notify_signal(symbol, combined)
 
     # ── Display Results ───────────────────────────────────────────────
     st.divider()

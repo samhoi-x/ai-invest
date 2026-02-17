@@ -71,8 +71,9 @@ TECH_PARAMS = {
 
 # ── ML Model Parameters ──────────────────────────────────────────────
 ML_PARAMS = {
-    "xgboost_weight": 0.55,
-    "lstm_weight": 0.45,
+    "xgboost_weight": 0.35,
+    "lightgbm_weight": 0.30,
+    "lstm_weight": 0.35,
     "forward_days": 5,                 # Predict 5-day forward return
     "lstm_window": 60,                 # 60-day sliding window
     "train_window_years": 2,           # Rolling 2-year training

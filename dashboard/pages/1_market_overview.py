@@ -11,9 +11,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from data.stock_fetcher import fetch_stock_data, get_current_price
 from data.crypto_fetcher import get_crypto_price, fetch_crypto_data
 from data.cache_manager import cache_price_data, get_cached_price_data
+from data.ws_price_feed import get_live_price, start_price_feed, is_feed_running
 from dashboard.components.charts import candlestick_chart, heatmap_chart
 from dashboard.components.metrics_cards import price_card
 from config import DEFAULT_STOCKS, DEFAULT_CRYPTO
+
+# Auto-start WebSocket price feed if not running
+if not is_feed_running():
+    start_price_feed(DEFAULT_CRYPTO)
 
 st.title("🌐 Market Overview")
 
@@ -36,7 +41,8 @@ with st.spinner("Fetching market prices..."):
 
     for i, sym in enumerate(crypto_symbols):
         with cols[len(index_symbols) + i]:
-            data = get_crypto_price(sym)
+            # Prefer WebSocket live data, fallback to REST
+            data = get_live_price(sym) or get_crypto_price(sym)
             if data:
                 price_card(sym.split("/")[0], data["price"], data["change"], data["change_pct"])
             else:

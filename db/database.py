@@ -87,7 +87,12 @@ def init_db():
             technical_score REAL,
             sentiment_score REAL,
             ml_score REAL,
-            created_at TEXT DEFAULT (datetime('now'))
+            created_at TEXT DEFAULT (datetime('now')),
+            -- Outcome tracking (filled later by accuracy tracker)
+            outcome_return_5d REAL,
+            outcome_return_10d REAL,
+            outcome_correct INTEGER,
+            outcome_checked_at TEXT
         );
 
         -- Portfolio holdings

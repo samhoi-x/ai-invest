@@ -309,6 +309,110 @@ class LSTMPredictor:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  LightGBM Direction Classifier
+# ══════════════════════════════════════════════════════════════════════
+
+class LightGBMPredictor:
+    """LightGBM classifier: predicts UP/DOWN/FLAT direction."""
+
+    def __init__(self):
+        self.model = None
+        self.feature_names = None
+        self.trained_at = None
+
+    def train(self, df: pd.DataFrame) -> dict:
+        import lightgbm as lgb
+        from sklearn.model_selection import TimeSeriesSplit
+        from sklearn.metrics import accuracy_score
+
+        X, y, feature_names = prepare_xgboost_data(df)
+        if len(X) < 100:
+            return {"error": "Insufficient data (need at least 100 samples)"}
+
+        self.feature_names = feature_names
+
+        tscv = TimeSeriesSplit(n_splits=3)
+        scores = []
+
+        for train_idx, val_idx in tscv.split(X):
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+            model = lgb.LGBMClassifier(
+                n_estimators=200, max_depth=6, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.1, reg_lambda=1.0,
+                random_state=42, verbose=-1,
+            )
+            model.fit(X_train, y_train,
+                      eval_set=[(X_val, y_val)],
+                      callbacks=[lgb.log_evaluation(period=0)])
+            preds = model.predict(X_val)
+            scores.append(accuracy_score(y_val, preds))
+
+        self.model = lgb.LGBMClassifier(
+            n_estimators=200, max_depth=6, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8,
+            reg_alpha=0.1, reg_lambda=1.0,
+            random_state=42, verbose=-1,
+        )
+        self.model.fit(X, y)
+        self.trained_at = datetime.now().isoformat()
+
+        return {
+            "cv_accuracy": round(float(np.mean(scores)), 4),
+            "cv_scores": [round(s, 4) for s in scores],
+            "n_samples": len(X),
+            "trained_at": self.trained_at,
+        }
+
+    def predict(self, df: pd.DataFrame) -> dict:
+        if self.model is None:
+            return {"error": "Model not trained"}
+
+        X, _, _ = prepare_xgboost_data(df)
+        if X.empty:
+            return {"error": "Could not prepare features"}
+
+        X_last = X.iloc[[-1]]
+        if self.feature_names:
+            missing = set(self.feature_names) - set(X_last.columns)
+            for col in missing:
+                X_last[col] = 0.0
+            X_last = X_last[self.feature_names]
+
+        probs = self.model.predict_proba(X_last)[0]
+        pred_class = self.model.predict(X_last)[0]
+        signal_score = probs[2] - probs[0]
+        direction_map = {0: "DOWN", 1: "FLAT", 2: "UP"}
+
+        return {
+            "direction": direction_map.get(pred_class, "FLAT"),
+            "probabilities": {"DOWN": round(float(probs[0]), 4),
+                              "FLAT": round(float(probs[1]), 4),
+                              "UP": round(float(probs[2]), 4)},
+            "signal_score": round(float(np.clip(signal_score, -1, 1)), 4),
+            "confidence": round(float(max(probs)), 4),
+        }
+
+    def save(self, symbol: str):
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        path = MODELS_DIR / f"lgb_{symbol.replace('/', '_')}.joblib"
+        joblib.dump({"model": self.model, "features": self.feature_names,
+                     "trained_at": self.trained_at}, path)
+
+    def load(self, symbol: str) -> bool:
+        path = MODELS_DIR / f"lgb_{symbol.replace('/', '_')}.joblib"
+        if path.exists():
+            data = joblib.load(path)
+            self.model = data["model"]
+            self.feature_names = data["features"]
+            self.trained_at = data.get("trained_at")
+            return True
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  Unified ML Signal
 # ══════════════════════════════════════════════════════════════════════
 
@@ -324,57 +428,48 @@ def _model_is_stale(trained_at: str | None) -> bool:
         return True
 
 
+def _load_train_predict(predictor, symbol, df, train_if_needed):
+    """Helper: load, retrain if stale, predict."""
+    default = {"signal_score": 0, "confidence": 0}
+    loaded = predictor.load(symbol)
+    if (not loaded or _model_is_stale(predictor.trained_at)) and train_if_needed:
+        train_result = predictor.train(df)
+        if "error" not in train_result:
+            predictor.save(symbol)
+    if predictor.model:
+        result = predictor.predict(df)
+        if "error" not in result:
+            return result
+    return default
+
+
 def compute_ml_signal(df: pd.DataFrame, symbol: str,
                       train_if_needed: bool = True) -> dict:
-    """Compute combined ML signal from XGBoost and LSTM.
+    """Compute combined ML signal from XGBoost, LightGBM, and LSTM.
 
     Returns dict with 'score' (-1 to +1), 'confidence', and model details.
     """
-    xgb = XGBoostPredictor()
-    lstm = LSTMPredictor()
-
-    xgb_result = {"signal_score": 0, "confidence": 0}
-    lstm_result = {"signal_score": 0, "confidence": 0}
-
-    # Try loading existing models; retrain if stale or missing
-    xgb_loaded = xgb.load(symbol)
-    needs_retrain = not xgb_loaded or _model_is_stale(xgb.trained_at)
-    if needs_retrain and train_if_needed:
-        train_result = xgb.train(df)
-        if "error" not in train_result:
-            xgb.save(symbol)
-    if xgb.model:
-        xgb_result = xgb.predict(df)
-        if "error" in xgb_result:
-            xgb_result = {"signal_score": 0, "confidence": 0}
-
-    lstm_loaded = lstm.load(symbol)
-    needs_retrain = not lstm_loaded or _model_is_stale(lstm.trained_at)
-    if needs_retrain and train_if_needed:
-        train_result = lstm.train(df)
-        if "error" not in train_result:
-            lstm.save(symbol)
-    if lstm.model:
-        lstm_result = lstm.predict(df)
-        if "error" in lstm_result:
-            lstm_result = {"signal_score": 0, "confidence": 0}
+    xgb_result = _load_train_predict(XGBoostPredictor(), symbol, df, train_if_needed)
+    lgb_result = _load_train_predict(LightGBMPredictor(), symbol, df, train_if_needed)
+    lstm_result = _load_train_predict(LSTMPredictor(), symbol, df, train_if_needed)
 
     # Weighted combination
     xgb_w = ML_PARAMS["xgboost_weight"]
+    lgb_w = ML_PARAMS["lightgbm_weight"]
     lstm_w = ML_PARAMS["lstm_weight"]
 
-    xgb_score = xgb_result.get("signal_score", 0)
-    lstm_score = lstm_result.get("signal_score", 0)
+    composite = (xgb_w * xgb_result.get("signal_score", 0)
+                 + lgb_w * lgb_result.get("signal_score", 0)
+                 + lstm_w * lstm_result.get("signal_score", 0))
 
-    composite = xgb_w * xgb_score + lstm_w * lstm_score
-
-    xgb_conf = xgb_result.get("confidence", 0)
-    lstm_conf = lstm_result.get("confidence", 0)
-    confidence = xgb_w * xgb_conf + lstm_w * lstm_conf
+    confidence = (xgb_w * xgb_result.get("confidence", 0)
+                  + lgb_w * lgb_result.get("confidence", 0)
+                  + lstm_w * lstm_result.get("confidence", 0))
 
     return {
         "score": round(float(np.clip(composite, -1, 1)), 4),
         "confidence": round(float(min(1.0, confidence)), 4),
         "xgboost": xgb_result,
+        "lightgbm": lgb_result,
         "lstm": lstm_result,
     }

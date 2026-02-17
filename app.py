@@ -2,6 +2,7 @@
 
 import streamlit as st
 from config import PAGE_ICON, PAGE_TITLE
+from i18n import t, language_selector
 
 st.set_page_config(
     page_title=PAGE_TITLE,
@@ -12,26 +13,27 @@ st.set_page_config(
 
 # ── Sidebar ───────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title(f"{PAGE_ICON} AI Smart Invest")
-    st.caption("Intelligent Investment Analysis System")
+    st.title(f"{PAGE_ICON} {t('app_title')}")
+    st.caption(t("app_subtitle"))
+    language_selector()
     st.divider()
 
 # ── Page Navigation ───────────────────────────────────────────────────
 pages = {
-    "Market Overview": [
-        st.Page("dashboard/pages/1_market_overview.py", title="Market Overview", icon="🌐"),
+    t("market_overview"): [
+        st.Page("dashboard/pages/1_market_overview.py", title=t("market_overview"), icon="\U0001f310"),
     ],
-    "AI Analysis": [
-        st.Page("dashboard/pages/2_ai_signals.py", title="AI Signals", icon="🤖"),
-        st.Page("dashboard/pages/3_portfolio.py", title="Portfolio", icon="💼"),
-        st.Page("dashboard/pages/4_risk_monitor.py", title="Risk Monitor", icon="🛡️"),
+    "AI": [
+        st.Page("dashboard/pages/2_ai_signals.py", title=t("ai_signals"), icon="\U0001f916"),
+        st.Page("dashboard/pages/3_portfolio.py", title=t("portfolio"), icon="\U0001f4bc"),
+        st.Page("dashboard/pages/4_risk_monitor.py", title=t("risk_monitor"), icon="\U0001f6e1\ufe0f"),
     ],
-    "Evaluation": [
-        st.Page("dashboard/pages/5_backtest.py", title="Backtest", icon="📈"),
-        st.Page("dashboard/pages/6_performance.py", title="Performance", icon="📊"),
+    t("backtest"): [
+        st.Page("dashboard/pages/5_backtest.py", title=t("backtest"), icon="\U0001f4c8"),
+        st.Page("dashboard/pages/6_performance.py", title=t("performance"), icon="\U0001f4ca"),
     ],
-    "System": [
-        st.Page("dashboard/pages/7_settings.py", title="Settings", icon="⚙️"),
+    t("settings"): [
+        st.Page("dashboard/pages/7_settings.py", title=t("settings"), icon="\u2699\ufe0f"),
     ],
 }
 

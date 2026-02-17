@@ -14,8 +14,8 @@ from config import SIGNAL_WEIGHTS, RISK, DEFAULT_STOCKS, DEFAULT_CRYPTO
 
 st.title("⚙️ System Settings")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "API Keys", "Signal Weights", "Risk Parameters", "Watchlist", "Data Management"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "API Keys", "Notifications", "Signal Weights", "Risk Parameters", "Watchlist", "Data Management"
 ])
 
 # ── API Keys ──────────────────────────────────────────────────────────
@@ -50,8 +50,48 @@ with tab1:
     - **Reddit:** [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) (Create script app)
     """)
 
-# ── Signal Weights ────────────────────────────────────────────────────
+# ── Notifications ────────────────────────────────────────────────────
 with tab2:
+    st.subheader("Telegram Notifications")
+    st.caption("Receive BUY/SELL signals and risk alerts via Telegram.")
+
+    with st.form("telegram_config"):
+        tg_token = st.text_input("Bot Token (from @BotFather)",
+                                  value=get_setting("telegram_bot_token", ""),
+                                  type="password")
+        tg_chat = st.text_input("Chat ID",
+                                 value=get_setting("telegram_chat_id", ""))
+        tg_enabled = st.checkbox("Enable notifications",
+                                  value=bool(get_setting("telegram_enabled", False)))
+
+        if st.form_submit_button("Save Telegram Settings", type="primary"):
+            set_setting("telegram_bot_token", tg_token)
+            set_setting("telegram_chat_id", tg_chat)
+            set_setting("telegram_enabled", tg_enabled)
+            st.success("Telegram settings saved.")
+
+    if st.button("Send Test Message"):
+        from data.notifier import send_telegram
+        token = get_setting("telegram_bot_token", "")
+        chat = get_setting("telegram_chat_id", "")
+        if token and chat:
+            ok = send_telegram(token, chat, "\u2705 <b>AI Smart Invest</b>\nTest message — notifications working!")
+            if ok:
+                st.success("Test message sent! Check your Telegram.")
+            else:
+                st.error("Failed to send. Check token and chat ID.")
+        else:
+            st.warning("Please configure bot token and chat ID first.")
+
+    st.markdown("""
+    **Setup steps:**
+    1. Message [@BotFather](https://t.me/BotFather) on Telegram → `/newbot` → copy the token
+    2. Message your bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID
+    3. For group notifications: add bot to group, send a message, check getUpdates for the group chat ID
+    """)
+
+# ── Signal Weights ────────────────────────────────────────────────────
+with tab3:
     st.subheader("Signal Weight Adjustment")
     st.caption("Adjust how much each factor contributes to the final signal.")
 
@@ -93,7 +133,7 @@ with tab2:
             st.success("Signal weights and thresholds saved.")
 
 # ── Risk Parameters ───────────────────────────────────────────────────
-with tab3:
+with tab4:
     st.subheader("Risk Parameters")
     st.caption("Configure risk management rules for your portfolio.")
 
@@ -139,7 +179,7 @@ with tab3:
             st.success("Risk parameters saved.")
 
 # ── Watchlist ─────────────────────────────────────────────────────────
-with tab4:
+with tab5:
     st.subheader("Watchlist Management")
 
     saved_stocks = get_setting("watchlist_stocks", DEFAULT_STOCKS)
@@ -158,8 +198,36 @@ with tab4:
             set_setting("watchlist_crypto", cryptos)
             st.success(f"Saved {len(stocks)} stocks and {len(cryptos)} crypto pairs.")
 
-# ── Data Management ───────────────────────────────────────────────────
-with tab5:
+# ── Scheduler ────────────────────────────────────────────────────────
+with tab6:
+    st.subheader("Auto Scheduler")
+    st.caption("Automatically scan watchlist and generate signals on a schedule.")
+
+    from scheduler import start_scheduler, stop_scheduler, is_running, run_scan_now
+
+    status_icon = "\U0001f7e2" if is_running() else "\U0001f534"
+    st.write(f"Scheduler status: {status_icon} {'Running' if is_running() else 'Stopped'}")
+
+    sched_interval = st.number_input("Scan interval (minutes)", value=60, min_value=5, max_value=1440, step=5)
+
+    scol1, scol2, scol3 = st.columns(3)
+    with scol1:
+        if st.button("Start Scheduler", type="primary", use_container_width=True, disabled=is_running()):
+            start_scheduler(sched_interval)
+            st.success(f"Scheduler started (every {sched_interval} min)")
+            st.rerun()
+    with scol2:
+        if st.button("Stop Scheduler", use_container_width=True, disabled=not is_running()):
+            stop_scheduler()
+            st.success("Scheduler stopped")
+            st.rerun()
+    with scol3:
+        if st.button("Run Scan Now", use_container_width=True):
+            with st.spinner("Scanning all watchlist symbols..."):
+                signals = run_scan_now()
+            st.success(f"Scan complete: {len(signals)} signals generated")
+
+    st.divider()
     st.subheader("Data Management")
 
     col1, col2, col3 = st.columns(3)
