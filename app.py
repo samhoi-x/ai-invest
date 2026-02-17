@@ -3,6 +3,9 @@
 import streamlit as st
 from config import PAGE_ICON, PAGE_TITLE
 from i18n import t, language_selector
+from logger import setup_logging
+
+setup_logging()
 
 st.set_page_config(
     page_title=PAGE_TITLE,

@@ -1,5 +1,6 @@
 """Machine Learning models: XGBoost classifier + LSTM trend predictor."""
 
+import logging
 import numpy as np
 import pandas as pd
 import joblib
@@ -8,6 +9,8 @@ from datetime import datetime
 
 from config import ML_PARAMS, MODELS_DIR
 from analysis.feature_engine import prepare_xgboost_data, prepare_lstm_data
+
+logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -425,6 +428,7 @@ def _model_is_stale(trained_at: str | None) -> bool:
         days_since = (datetime.now() - trained_dt).days
         return days_since >= ML_PARAMS["retrain_interval_days"]
     except (ValueError, TypeError):
+        logger.warning("Could not parse trained_at timestamp '%s', treating model as stale", trained_at)
         return True
 
 

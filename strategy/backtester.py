@@ -1,11 +1,14 @@
 """Event-driven backtesting engine."""
 
+import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime
 from analysis.technical import compute_technical_signal
 from config import (BUY_THRESHOLD, SELL_THRESHOLD, BUY_CONFIDENCE_MIN,
                     SELL_CONFIDENCE_MIN, STOP_LOSS, RISK)
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestEngine:
@@ -106,6 +109,7 @@ class BacktestEngine:
                 try:
                     signal = signal_func(history)
                 except Exception:
+                    logger.warning("Signal computation failed for %s on %s", sym, str(date)[:10])
                     continue
 
                 score = signal.get("score", 0)

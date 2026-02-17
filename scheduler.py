@@ -5,6 +5,9 @@ import time
 import logging
 from datetime import datetime
 
+from logger import setup_logging
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 _scheduler_thread = None

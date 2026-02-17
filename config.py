@@ -10,6 +10,10 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "db" / "invest.db"
 MODELS_DIR = BASE_DIR / "models"
+LOG_DIR = "logs"
+
+# ── Logging ──────────────────────────────────────────────────────────
+LOG_LEVEL = "INFO"
 
 # ── API Keys ───────────────────────────────────────────────────────────
 MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "")

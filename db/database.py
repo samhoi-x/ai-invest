@@ -1,8 +1,11 @@
 """SQLite database connection and initialization."""
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from config import DB_PATH
+
+logger = logging.getLogger(__name__)
 
 
 def get_connection() -> sqlite3.Connection:
@@ -21,6 +24,7 @@ def get_db():
         yield conn
         conn.commit()
     except Exception:
+        logger.exception("Database operation failed, rolling back")
         conn.rollback()
         raise
     finally:

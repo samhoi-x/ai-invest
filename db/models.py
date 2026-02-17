@@ -1,8 +1,11 @@
 """Database helper functions for CRUD operations."""
 
 import json
+import logging
 from datetime import datetime
 from db.database import get_db
+
+logger = logging.getLogger(__name__)
 
 
 # ── Settings ──────────────────────────────────────────────────────────
@@ -14,6 +17,7 @@ def get_setting(key: str, default=None):
             try:
                 return json.loads(row["value"])
             except (json.JSONDecodeError, TypeError):
+                logger.warning("Failed to decode JSON for setting '%s', returning raw value", key)
                 return row["value"]
         return default
 

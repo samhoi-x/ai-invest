@@ -41,6 +41,7 @@ def evaluate_signal(signal: dict) -> dict | None:
     try:
         signal_date = pd.Timestamp(created)
     except Exception:
+        logger.warning("Could not parse signal date '%s' for signal %s", created, signal.get("id"))
         return None
 
     # Fetch recent data
@@ -50,6 +51,7 @@ def evaluate_signal(signal: dict) -> dict | None:
         else:
             df = fetch_stock_data(symbol, period="1mo")
     except Exception:
+        logger.warning("Failed to fetch price data for %s during accuracy evaluation", symbol)
         return None
 
     if df is None or df.empty:
