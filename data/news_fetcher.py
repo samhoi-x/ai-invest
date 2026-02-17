@@ -4,12 +4,17 @@ import requests
 import time
 import logging
 from datetime import datetime, timedelta
-from config import MARKETAUX_API_KEY, FINNHUB_API_KEY
+from config import MARKETAUX_API_KEY, FINNHUB_API_KEY, RATE_LIMITS
+from data.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 2
 _BACKOFF_BASE = 1.5
+
+# Rate limiters for each API
+_marketaux_limiter = RateLimiter(RATE_LIMITS["marketaux_per_day"], 86400)  # per day
+_finnhub_limiter = RateLimiter(RATE_LIMITS["finnhub_per_minute"], 60)     # per minute
 
 
 def _request_with_retry(url: str, params: dict, timeout: int = 10) -> requests.Response:
@@ -31,6 +36,7 @@ def fetch_marketaux_news(symbol: str, limit: int = 10) -> list[dict]:
     """Fetch news from MarketAux API (free tier: 100 req/day)."""
     if not MARKETAUX_API_KEY:
         return []
+    _marketaux_limiter.acquire()
     try:
         resp = _request_with_retry(
             "https://api.marketaux.com/v1/news/all",
@@ -53,7 +59,8 @@ def fetch_marketaux_news(symbol: str, limit: int = 10) -> list[dict]:
                 "published_at": item.get("published_at", ""),
             })
         return articles
-    except Exception:
+    except Exception as e:
+        logger.warning("MarketAux fetch failed for %s: %s", symbol, e)
         return []
 
 
@@ -61,6 +68,7 @@ def fetch_finnhub_news(symbol: str, days: int = 7) -> list[dict]:
     """Fetch news from Finnhub API (free tier: 60 calls/min)."""
     if not FINNHUB_API_KEY:
         return []
+    _finnhub_limiter.acquire()
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -83,7 +91,8 @@ def fetch_finnhub_news(symbol: str, days: int = 7) -> list[dict]:
                 "published_at": datetime.fromtimestamp(item.get("datetime", 0)).isoformat(),
             })
         return articles
-    except Exception:
+    except Exception as e:
+        logger.warning("Finnhub fetch failed for %s: %s", symbol, e)
         return []
 
 

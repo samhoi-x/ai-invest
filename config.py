@@ -84,6 +84,14 @@ ML_PARAMS = {
     "retrain_interval_days": 60,       # Retrain every 60 days
 }
 
+# ── Rate Limits ──────────────────────────────────────────────────────
+RATE_LIMITS = {
+    "marketaux_per_day": 80,       # Conservative: 80/100 daily
+    "finnhub_per_minute": 50,      # Conservative: 50/60 per minute
+    "yfinance_per_minute": 30,     # No official limit, reasonable default
+    "reddit_per_minute": 50,       # PRAW has built-in limiting, extra protection
+}
+
 # ── Cache Settings ────────────────────────────────────────────────────
 CACHE_TTL = {
     "price_minutes": 15,               # Price data cache: 15 min

@@ -5,11 +5,15 @@ import pandas as pd
 import time
 import logging
 from datetime import datetime, timedelta
+from config import RATE_LIMITS
+from data.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 1.5  # seconds
+
+_yfinance_limiter = RateLimiter(RATE_LIMITS["yfinance_per_minute"], 60)
 
 
 def _retry(func, *args, retries=_MAX_RETRIES, **kwargs):
@@ -40,7 +44,8 @@ def fetch_stock_data(symbol: str, period: str = "1y", interval: str = "1d") -> p
     try:
         ticker = _retry(lambda: yf.Ticker(symbol))
         df = _retry(lambda: ticker.history(period=period, interval=interval))
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to fetch stock data for %s: %s", symbol, e)
         return pd.DataFrame()
     if df.empty:
         return pd.DataFrame()
@@ -76,11 +81,13 @@ def fetch_multiple_stocks(symbols: list[str], period: str = "1y") -> dict[str, p
     """Fetch data for multiple symbols."""
     results = {}
     for sym in symbols:
+        _yfinance_limiter.acquire()
         try:
             df = fetch_stock_data(sym, period=period)
             if not df.empty:
                 results[sym] = df
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to fetch stock %s: %s", sym, e)
             continue
     return results
 
@@ -102,5 +109,6 @@ def get_current_price(symbol: str) -> dict | None:
             "change": round(change, 2),
             "change_pct": round(change_pct, 2),
         }
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to get current price for %s: %s", symbol, e)
         return None

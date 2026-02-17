@@ -1,7 +1,13 @@
 """Reddit social data fetcher using PRAW."""
 
+import logging
 import praw
-from config import REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USER_AGENT
+from config import REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USER_AGENT, RATE_LIMITS
+from data.rate_limiter import RateLimiter
+
+logger = logging.getLogger(__name__)
+
+_reddit_limiter = RateLimiter(RATE_LIMITS["reddit_per_minute"], 60)
 
 
 def _get_reddit():
@@ -42,6 +48,7 @@ def fetch_reddit_posts(symbol: str, asset_type: str = "stock",
     posts = []
 
     for sub_name in subreddits:
+        _reddit_limiter.acquire()
         try:
             subreddit = reddit.subreddit(sub_name)
             for post in subreddit.search(ticker, sort="new", time_filter="week", limit=limit):
@@ -54,7 +61,8 @@ def fetch_reddit_posts(symbol: str, asset_type: str = "stock",
                     "created": post.created_utc,
                     "url": f"https://reddit.com{post.permalink}",
                 })
-        except Exception:
+        except Exception as e:
+            logger.warning("Reddit posts fetch failed for %s in r/%s: %s", ticker, sub_name, e)
             continue
 
     # Sort by score (engagement)
@@ -77,6 +85,7 @@ def fetch_reddit_comments(symbol: str, asset_type: str = "stock",
     comments = []
 
     for sub_name in subreddits:
+        _reddit_limiter.acquire()
         try:
             subreddit = reddit.subreddit(sub_name)
             for post in subreddit.search(ticker, sort="new", time_filter="week", limit=5):
@@ -86,7 +95,8 @@ def fetch_reddit_comments(symbol: str, asset_type: str = "stock",
                         comments.append(comment.body[:300])
                     if len(comments) >= limit:
                         break
-        except Exception:
+        except Exception as e:
+            logger.warning("Reddit comments fetch failed for %s in r/%s: %s", ticker, sub_name, e)
             continue
 
     return comments[:limit]

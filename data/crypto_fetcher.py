@@ -109,8 +109,10 @@ def fetch_multiple_crypto(pairs: list[str], timeframe: str = "1d",
             df = fetch_crypto_data(pair, timeframe=timeframe, days=days)
             if not df.empty:
                 results[pair] = df
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to fetch crypto data for %s: %s", pair, e)
             continue
+        time.sleep(0.5)
     return results
 
 
@@ -128,7 +130,8 @@ def get_crypto_price(symbol: str = "BTC/USDT") -> dict | None:
             "high_24h": ticker.get("high", 0),
             "low_24h": ticker.get("low", 0),
         }
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to get crypto price for %s: %s", symbol, e)
         return None
 
 
@@ -139,4 +142,5 @@ def get_multiple_crypto_prices(pairs: list[str]) -> list[dict]:
         price = get_crypto_price(pair)
         if price:
             results.append(price)
+        time.sleep(0.5)
     return results
