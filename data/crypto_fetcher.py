@@ -1,4 +1,4 @@
-"""Cryptocurrency data fetcher using ccxt (Binance public API) with retry."""
+"""Cryptocurrency data fetcher using ccxt with exchange fallback and retry."""
 
 import ccxt
 import pandas as pd
@@ -11,9 +11,41 @@ logger = logging.getLogger(__name__)
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 2.0
 
+# Exchanges to try in order (Binance often blocked by region)
+_EXCHANGE_CLASSES = [
+    ("okx", lambda: ccxt.okx({"enableRateLimit": True})),
+    ("bybit", lambda: ccxt.bybit({"enableRateLimit": True})),
+    ("kucoin", lambda: ccxt.kucoin({"enableRateLimit": True})),
+    ("binance", lambda: ccxt.binance({"enableRateLimit": True})),
+]
+
+_active_exchange = None
+_active_name = None
+
 
 def _get_exchange():
-    return ccxt.binance({"enableRateLimit": True})
+    """Get a working exchange, with fallback across multiple providers."""
+    global _active_exchange, _active_name
+    if _active_exchange is not None:
+        return _active_exchange
+
+    for name, factory in _EXCHANGE_CLASSES:
+        try:
+            ex = factory()
+            ex.fetch_ticker("BTC/USDT")
+            _active_exchange = ex
+            _active_name = name
+            logger.info("Using crypto exchange: %s", name)
+            return ex
+        except Exception as e:
+            logger.info("Exchange %s unavailable: %s", name, e)
+            continue
+
+    # All failed — return first as default, will error on use
+    logger.warning("No crypto exchange available")
+    _active_exchange = _EXCHANGE_CLASSES[0][1]()
+    _active_name = _EXCHANGE_CLASSES[0][0]
+    return _active_exchange
 
 
 def _retry(func, retries=_MAX_RETRIES):
