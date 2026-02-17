@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+Lib/
+Scripts/
+etc/
+share/
+pip_out.txt
+pip_output.txt
+pyvenv.cfg
+
+# Environment & secrets
+.env
+*.env
+
+# Database
+db/invest.db
+db/invest.db-wal
+db/invest.db-shm
+
+# ML models (large binary files)
+models/*.joblib
+models/*.pt
+!models/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Claude
+.claude/
