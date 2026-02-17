@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from i18n import t
 
 from data.stock_fetcher import get_current_price, fetch_stock_data
 from data.crypto_fetcher import get_crypto_price
@@ -20,7 +21,7 @@ from dashboard.components.charts import line_chart, bar_chart
 from dashboard.components.metrics_cards import risk_metric
 from config import RISK
 
-st.title("🛡️ Risk Monitor")
+st.title(f"\U0001f6e1\ufe0f {t('risk_monitor')}")
 
 # ── Portfolio Risk Overview ───────────────────────────────────────────
 holdings = get_holdings()
@@ -50,7 +51,7 @@ cash_reserve = total_value * RISK["min_cash_reserve"]  # Assumed
 cash_info = check_cash_reserve(cash_reserve, total_value)
 
 # ── Risk Metric Cards ────────────────────────────────────────────────
-st.subheader("Risk Overview")
+st.subheader(t("risk_overview"))
 rcols = st.columns(4)
 
 with rcols[0]:
@@ -71,7 +72,7 @@ with rcols[3]:
 
 # ── Drawdown Protection Rules ────────────────────────────────────────
 st.divider()
-st.subheader("Drawdown Protection")
+st.subheader(t("drawdown_protection"))
 
 if dd_info["actions"]:
     for action in dd_info["actions"]:
@@ -89,7 +90,7 @@ st.dataframe(dd_levels, use_container_width=True, hide_index=True)
 
 # ── Position Risk Table ──────────────────────────────────────────────
 st.divider()
-st.subheader("Position Risk Analysis")
+st.subheader(t("position_risk"))
 
 position_risks = []
 for h in holdings:
@@ -129,7 +130,7 @@ st.dataframe(pd.DataFrame(position_risks), use_container_width=True, hide_index=
 
 # ── Risk Limit Checks ────────────────────────────────────────────────
 st.divider()
-st.subheader("Risk Limit Status")
+st.subheader(t("risk_limit_status"))
 
 limits = []
 for h in holdings:
@@ -149,7 +150,7 @@ st.dataframe(pd.DataFrame(limits), use_container_width=True, hide_index=True)
 
 # ── Risk Alerts ───────────────────────────────────────────────────────
 st.divider()
-st.subheader("Risk Alert Log")
+st.subheader(t("risk_alerts"))
 alerts = get_risk_alerts(30)
 if alerts:
     for alert in alerts:

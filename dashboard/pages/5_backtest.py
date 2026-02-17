@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from i18n import t
 
 from data.stock_fetcher import fetch_stock_data
 from data.crypto_fetcher import fetch_crypto_data
@@ -15,13 +16,13 @@ from strategy.backtester import BacktestEngine
 from db.models import save_backtest, get_backtest_results
 from dashboard.components.charts import line_chart, bar_chart
 
-st.title("📈 Strategy Backtest")
+st.title(f"\U0001f4c8 {t('backtest')}")
 
 st.warning("⚠️ Backtest results do not guarantee future performance. Subject to survivorship bias and overfitting.")
 
 # ── Configuration ─────────────────────────────────────────────────────
 with st.form("backtest_config"):
-    st.subheader("Backtest Parameters")
+    st.subheader(t("backtest_params"))
     col1, col2 = st.columns(2)
 
     with col1:
@@ -36,7 +37,7 @@ with st.form("backtest_config"):
         commission = st.number_input("Commission (%)", value=0.1, step=0.01, min_value=0.0) / 100
 
     backtest_name = st.text_input("Backtest Name", f"Backtest {datetime.now().strftime('%Y%m%d_%H%M')}")
-    run_bt = st.form_submit_button("🚀 Run Backtest", type="primary")
+    run_bt = st.form_submit_button(f"🚀 {t('run_backtest')}", type="primary")
 
 # ── Run Backtest ──────────────────────────────────────────────────────
 if run_bt:
@@ -85,7 +86,7 @@ if run_bt:
 
     # ── Performance Metrics ───────────────────────────────────────────
     st.divider()
-    st.subheader("Performance Summary")
+    st.subheader(t("performance_summary"))
 
     mcols = st.columns(4)
     mcols[0].metric("Total Return", f"{results['total_return']:.2%}")
@@ -101,7 +102,7 @@ if run_bt:
 
     # ── Equity Curve ──────────────────────────────────────────────────
     st.divider()
-    st.subheader("Equity Curve")
+    st.subheader(t("equity_curve"))
 
     eq_df = pd.DataFrame({
         "date": pd.to_datetime(results["dates"]),
@@ -148,7 +149,7 @@ if run_bt:
 
     # ── Trade Log ─────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Trade Log")
+    st.subheader(t("trade_log"))
 
     if results.get("trades"):
         trades_df = pd.DataFrame(results["trades"])
@@ -173,7 +174,7 @@ if run_bt:
 
 # ── Past Backtests ────────────────────────────────────────────────────
 st.divider()
-st.subheader("Previous Backtests")
+st.subheader(t("prev_backtests"))
 
 past = get_backtest_results(10)
 if past:

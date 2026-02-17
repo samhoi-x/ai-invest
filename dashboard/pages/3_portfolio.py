@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from i18n import t
 
 from data.stock_fetcher import get_current_price, fetch_stock_data
 from data.crypto_fetcher import get_crypto_price
@@ -15,10 +16,10 @@ from dashboard.components.charts import pie_chart
 from dashboard.components.tables import holdings_table, transaction_table
 from config import DEFAULT_STOCKS, DEFAULT_CRYPTO
 
-st.title("💼 Portfolio Management")
+st.title(f"\U0001f4bc {t('portfolio')}")
 
 # ── Add Holdings ──────────────────────────────────────────────────────
-with st.expander("➕ Add/Update Holding"):
+with st.expander(f"➕ {t('add_holding')}"):
     with st.form("add_holding"):
         hcol1, hcol2, hcol3 = st.columns(3)
         with hcol1:
@@ -72,17 +73,17 @@ day_pnl = total_value - total_cost  # Simplified
 total_return = (total_value / total_cost - 1) * 100 if total_cost > 0 else 0
 
 # ── Summary Cards ─────────────────────────────────────────────────────
-st.subheader("Portfolio Summary")
+st.subheader(t("portfolio_summary"))
 cols = st.columns(4)
-cols[0].metric("Total Value", f"${total_value:,.2f}")
-cols[1].metric("Total Cost", f"${total_cost:,.2f}")
-cols[2].metric("Unrealized P&L", f"${day_pnl:,.2f}",
+cols[0].metric(t("total_value"), f"${total_value:,.2f}")
+cols[1].metric(t("total_cost"), f"${total_cost:,.2f}")
+cols[2].metric(t("unrealized_pnl"), f"${day_pnl:,.2f}",
                f"{total_return:+.2f}%")
-cols[3].metric("Positions", str(len(holdings)))
+cols[3].metric(t("positions"), str(len(holdings)))
 
 # ── Allocation Pie Chart ──────────────────────────────────────────────
 st.divider()
-st.subheader("Current Allocation")
+st.subheader(t("current_allocation"))
 
 labels = []
 values = []
@@ -97,11 +98,11 @@ with acol1:
 
 # ── Holdings Table ────────────────────────────────────────────────────
 with acol2:
-    st.subheader("Holdings Detail")
+    st.subheader(t("holdings_detail"))
     holdings_table(holdings, prices)
 
 # ── Remove Holding ────────────────────────────────────────────────────
-with st.expander("🗑️ Remove Holding"):
+with st.expander(f"🗑️ {t('remove_holding')}"):
     remove_sym = st.selectbox("Select holding to remove",
                               [h["symbol"] for h in holdings], key="remove_sym")
     if st.button("Remove", type="secondary"):
@@ -111,7 +112,7 @@ with st.expander("🗑️ Remove Holding"):
 
 # ── Portfolio Optimization ────────────────────────────────────────────
 st.divider()
-st.subheader("Portfolio Optimization")
+st.subheader(t("portfolio_optimization"))
 
 opt_method = st.selectbox("Optimization Method",
                           ["min_volatility", "max_sharpe", "efficient_risk"],
@@ -119,7 +120,7 @@ opt_method = st.selectbox("Optimization Method",
                                                   "max_sharpe": "Maximum Sharpe Ratio",
                                                   "efficient_risk": "Efficient Risk (15% target vol)"}.get(x, x))
 
-if st.button("Run Optimization", type="primary"):
+if st.button(t("run_optimization"), type="primary"):
     with st.spinner("Fetching price history and optimizing..."):
         price_data = {}
         for h in holdings:
@@ -161,13 +162,13 @@ if st.button("Run Optimization", type="primary"):
                                    for h in holdings}
                 suggestions = get_rebalance_suggestions(current_weights, result["weights"], total_value)
                 if suggestions:
-                    st.subheader("Rebalance Suggestions")
+                    st.subheader(t("rebalance_suggestions"))
                     st.dataframe(pd.DataFrame(suggestions), use_container_width=True, hide_index=True)
         else:
             st.warning("Need at least 2 assets with data for optimization.")
 
 # ── Transaction History ───────────────────────────────────────────────
 st.divider()
-st.subheader("Transaction History")
+st.subheader(t("transaction_history"))
 transactions = get_transactions(50)
 transaction_table(transactions)

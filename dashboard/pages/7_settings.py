@@ -7,15 +7,16 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from i18n import t
 
 from db.models import get_setting, set_setting
 from data.cache_manager import clear_cache
 from config import SIGNAL_WEIGHTS, RISK, DEFAULT_STOCKS, DEFAULT_CRYPTO
 
-st.title("⚙️ System Settings")
+st.title(f"\u2699\ufe0f {t('settings')}")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "API Keys", "Notifications", "Signal Weights", "Risk Parameters", "Watchlist", "Data Management"
+    t("api_keys"), t("notifications"), t("signal_weights"), t("risk_parameters"), t("watchlist"), t("data_management")
 ])
 
 # ── API Keys ──────────────────────────────────────────────────────────

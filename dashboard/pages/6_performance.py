@@ -8,12 +8,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from i18n import t
 
 from db.models import get_latest_signals, get_transactions, get_backtest_results
 from analysis.accuracy_tracker import run_accuracy_check, get_accuracy_stats
 from dashboard.components.charts import bar_chart, line_chart
 
-st.title("📊 Performance Tracking")
+st.title(f"\U0001f4ca {t('performance')}")
 
 # ── Signal Outcome Verification ──────────────────────────────────────
 st.subheader("Signal Outcome Verification")
@@ -63,7 +64,7 @@ with vcol1:
 st.divider()
 
 # ── Signal Accuracy ───────────────────────────────────────────────────
-st.subheader("Signal Accuracy Statistics")
+st.subheader(t("signal_accuracy"))
 
 signals = get_latest_signals(200)
 if signals:
@@ -82,7 +83,7 @@ if signals:
 
     # Confidence distribution
     st.divider()
-    st.subheader("Signal Confidence Distribution")
+    st.subheader(t("confidence_dist"))
 
     if "confidence" in df.columns:
         fig = go.Figure()
@@ -103,7 +104,7 @@ if signals:
 
     # Signal strength over time
     st.divider()
-    st.subheader("Signal Strength Over Time")
+    st.subheader(t("signal_strength_time"))
 
     if "created_at" in df.columns:
         df["created_at"] = pd.to_datetime(df["created_at"])
@@ -140,7 +141,7 @@ if signals:
 
     # Factor contribution
     st.divider()
-    st.subheader("Factor Contribution Breakdown")
+    st.subheader(t("factor_contribution"))
 
     factor_cols = ["technical_score", "sentiment_score", "ml_score"]
     available_factors = [c for c in factor_cols if c in df.columns]
@@ -163,7 +164,7 @@ else:
 
 # ── Backtest Performance Comparison ───────────────────────────────────
 st.divider()
-st.subheader("Backtest Performance Comparison")
+st.subheader(t("backtest_comparison"))
 
 backtests = get_backtest_results(10)
 if backtests:
@@ -197,7 +198,7 @@ else:
 
 # ── Transaction Summary ───────────────────────────────────────────────
 st.divider()
-st.subheader("Transaction Summary")
+st.subheader(t("transaction_summary"))
 
 transactions = get_transactions(200)
 if transactions:

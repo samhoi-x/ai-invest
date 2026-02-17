@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from i18n import t
 
 from data.stock_fetcher import fetch_stock_data
 from data.crypto_fetcher import fetch_crypto_data
@@ -23,28 +24,28 @@ from db.models import save_signal, get_latest_signals, get_signal_history
 from data.notifier import notify_signal
 from config import DEFAULT_STOCKS, DEFAULT_CRYPTO
 
-st.title("🤖 AI Trading Signals")
+st.title(f"\U0001f916 {t('ai_signals')}")
 
-st.warning("⚠️ Disclaimer: Signals are for educational/reference purposes only. Not investment advice.")
+st.warning(f"⚠️ {t('disclaimer')}")
 
 # ── Symbol Selection ──────────────────────────────────────────────────
 col1, col2 = st.columns([1, 1])
 with col1:
-    asset_type = st.radio("Asset Type", ["Stock", "Crypto"], horizontal=True, key="sig_type")
+    asset_type = st.radio(t("asset_type"), [t("stock"), t("crypto")], horizontal=True, key="sig_type")
 with col2:
-    if asset_type == "Stock":
-        symbol = st.selectbox("Select Symbol", DEFAULT_STOCKS, key="sig_symbol")
+    if asset_type == t("stock"):
+        symbol = st.selectbox(t("select_symbol"), DEFAULT_STOCKS, key="sig_symbol")
     else:
-        symbol = st.selectbox("Select Symbol", DEFAULT_CRYPTO, key="sig_crypto")
+        symbol = st.selectbox(t("select_symbol"), DEFAULT_CRYPTO, key="sig_crypto")
 
-generate = st.button("🔄 Generate Signal", type="primary", use_container_width=True)
+generate = st.button(f"🔄 {t('generate_signal')}", type="primary", use_container_width=True)
 
 # ── Signal Generation ─────────────────────────────────────────────────
 if generate:
-    with st.spinner(f"Analyzing {symbol}..."):
+    with st.spinner(f"{t('analyzing')} {symbol}..."):
         # 1. Fetch price data
         try:
-            if asset_type == "Stock":
+            if asset_type == t("stock"):
                 df = get_cached_price_data(symbol, "stock")
                 if df is None:
                     df = fetch_stock_data(symbol, period="2y")
@@ -74,7 +75,7 @@ if generate:
             news = fetch_news(symbol.split("/")[0])
             social = [p["title"] + " " + p.get("text", "")
                       for p in fetch_reddit_posts(symbol.split("/")[0],
-                                                  "crypto" if asset_type == "Crypto" else "stock")]
+                                                  "crypto" if asset_type == t("crypto") else "stock")]
             sent_signal = compute_sentiment_signal(news, social)
         except Exception:
             sent_signal = {"score": 0, "confidence": 0.3, "news_sentiment": 0,
@@ -113,26 +114,26 @@ if generate:
                 combined["sentiment_score"], combined["ml_score"])
 
     st.divider()
-    st.subheader("Factor Breakdown")
+    st.subheader(t("factor_breakdown"))
     factor_breakdown(combined["technical_score"], combined["sentiment_score"],
                      combined["ml_score"])
 
     # Technical details
-    with st.expander("📊 Technical Analysis Details"):
+    with st.expander(f"📊 {t('tech_details')}"):
         st.json(tech_signal)
 
-    with st.expander("📰 Sentiment Analysis Details"):
+    with st.expander(f"📰 {t('sent_details')}"):
         st.write(f"News articles analyzed: {sent_signal.get('news_count', 0)}")
         st.write(f"Social posts analyzed: {sent_signal.get('social_count', 0)}")
         st.write(f"News sentiment: {sent_signal.get('news_sentiment', 0):+.4f}")
         st.write(f"Social sentiment: {sent_signal.get('social_sentiment', 0):+.4f}")
 
-    with st.expander("🤖 ML Model Details"):
+    with st.expander(f"🤖 {t('ml_details')}"):
         st.json(ml_signal)
 
     # Chart with indicators
     st.divider()
-    st.subheader("Price Chart with Indicators")
+    st.subheader(t("price_chart_indicators"))
     indicators_df = compute_all_indicators(df)
     overlay = {
         "SMA_20": indicators_df.get("SMA_20"),
@@ -145,9 +146,9 @@ if generate:
 
 # ── Signal History ────────────────────────────────────────────────────
 st.divider()
-st.subheader("Recent Signals")
+st.subheader(t("recent_signals"))
 recent = get_latest_signals(30)
 if recent:
     signal_table(recent)
 else:
-    st.caption("No signals generated yet. Click 'Generate Signal' above.")
+    st.caption(t("no_signals"))
