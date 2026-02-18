@@ -244,7 +244,10 @@ class BacktestEngine:
 
         for sym, df in price_data.items():
             first_valid = df.index[0]
-            shares[sym] = alloc / df.loc[first_valid, "close"]
+            close_price = df.loc[first_valid, "close"]
+            if close_price == 0:
+                continue
+            shares[sym] = alloc / close_price
 
         benchmark = []
         for date in dates:

@@ -129,8 +129,8 @@ def notify_signal(symbol: str, signal: dict, bot_token: str = "", chat_id: str =
             from db.models import get_setting
             bot_token = bot_token or get_setting("telegram_bot_token", "")
             chat_id = chat_id or get_setting("telegram_chat_id", "")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load Telegram settings for signal notification: %s", e)
 
     if bot_token and chat_id:
         msg = format_signal_message(symbol, signal)
@@ -144,7 +144,8 @@ def notify_risk_alert(alert_type: str, severity: str, message: str,
         from db.models import get_setting
         bot_token = get_setting("telegram_bot_token", "")
         chat_id = get_setting("telegram_chat_id", "")
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to load Telegram settings for risk alert: %s", e)
         return
 
     if bot_token and chat_id:
@@ -158,7 +159,8 @@ def notify_daily_summary(signals: list[dict]):
         from db.models import get_setting
         bot_token = get_setting("telegram_bot_token", "")
         chat_id = get_setting("telegram_chat_id", "")
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to load Telegram settings for daily summary: %s", e)
         return
 
     if bot_token and chat_id:

@@ -124,15 +124,15 @@ def fetch_news(symbol: str) -> list[dict]:
             if cached:
                 logger.info("Using cached news for %s (live fetch returned empty)", symbol)
                 return cached
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to read news cache for %s: %s", symbol, e)
 
     # Cache successful results for future fallback
     if unique:
         try:
             from data.cache_manager import cache_news
             cache_news(symbol, unique)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to write news cache for %s: %s", symbol, e)
 
     return unique

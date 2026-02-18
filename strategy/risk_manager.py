@@ -85,6 +85,9 @@ def check_drawdown(equity_curve: list[float]) -> dict:
     for val in equity_curve:
         if val > peak:
             peak = val
+        if peak == 0:
+            peak = val
+            continue
         dd = (peak - val) / peak
         max_dd = max(max_dd, dd)
         current_dd = dd

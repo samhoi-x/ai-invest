@@ -70,6 +70,9 @@ def evaluate_signal(signal: dict) -> dict | None:
     base_idx = df.index[mask][0]
     base_price = df.loc[base_idx, "close"]
 
+    if base_price == 0:
+        return None
+
     # 5-day and 10-day forward returns
     future_5 = df.index[df.index > base_idx]
     future_10 = df.index[df.index > base_idx]

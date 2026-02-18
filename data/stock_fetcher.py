@@ -62,19 +62,33 @@ def fetch_stock_data(symbol: str, period: str = "1y", interval: str = "1d") -> p
 
 def fetch_stock_info(symbol: str) -> dict:
     """Fetch stock metadata (sector, name, market cap, etc.)."""
-    ticker = yf.Ticker(symbol)
-    info = ticker.info or {}
-    return {
-        "symbol": symbol,
-        "name": info.get("shortName", symbol),
-        "sector": info.get("sector", "Unknown"),
-        "industry": info.get("industry", "Unknown"),
-        "market_cap": info.get("marketCap", 0),
-        "pe_ratio": info.get("trailingPE", None),
-        "dividend_yield": info.get("dividendYield", None),
-        "fifty_two_week_high": info.get("fiftyTwoWeekHigh", None),
-        "fifty_two_week_low": info.get("fiftyTwoWeekLow", None),
-    }
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info or {}
+        return {
+            "symbol": symbol,
+            "name": info.get("shortName", symbol),
+            "sector": info.get("sector", "Unknown"),
+            "industry": info.get("industry", "Unknown"),
+            "market_cap": info.get("marketCap", 0),
+            "pe_ratio": info.get("trailingPE", None),
+            "dividend_yield": info.get("dividendYield", None),
+            "fifty_two_week_high": info.get("fiftyTwoWeekHigh", None),
+            "fifty_two_week_low": info.get("fiftyTwoWeekLow", None),
+        }
+    except Exception as e:
+        logger.warning("Failed to fetch stock info for %s: %s", symbol, e)
+        return {
+            "symbol": symbol,
+            "name": symbol,
+            "sector": "Unknown",
+            "industry": "Unknown",
+            "market_cap": 0,
+            "pe_ratio": None,
+            "dividend_yield": None,
+            "fifty_two_week_high": None,
+            "fifty_two_week_low": None,
+        }
 
 
 def fetch_multiple_stocks(symbols: list[str], period: str = "1y") -> dict[str, pd.DataFrame]:

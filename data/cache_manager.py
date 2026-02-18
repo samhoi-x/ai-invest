@@ -1,13 +1,20 @@
 """SQLite cache layer for price and other data."""
 
+import logging
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from db.database import get_db
 from config import CACHE_TTL
 
+logger = logging.getLogger(__name__)
+
 
 def _is_stale(fetched_at_str: str, ttl_minutes: int) -> bool:
-    fetched_at = datetime.fromisoformat(fetched_at_str)
+    try:
+        fetched_at = datetime.fromisoformat(fetched_at_str)
+    except (ValueError, TypeError):
+        logger.warning("Could not parse cache timestamp '%s', treating as stale", fetched_at_str)
+        return True
     # SQLite datetime('now') stores UTC, so compare with UTC
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     return now_utc - fetched_at > timedelta(minutes=ttl_minutes)

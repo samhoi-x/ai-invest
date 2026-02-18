@@ -12,6 +12,9 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     Returns a DataFrame with engineered features suitable for ML models.
     All features are numeric and NaN-free (rows with NaN are dropped).
     """
+    if df.empty:
+        return pd.DataFrame()
+
     # Start with technical indicators
     feat = compute_all_indicators(df)
 
@@ -32,7 +35,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
             feat[f"price_to_sma{p}"] = feat["close"] / feat[col].replace(0, np.nan) - 1
 
     # High-low range
-    feat["hl_range"] = (feat["high"] - feat["low"]) / feat["close"]
+    feat["hl_range"] = (feat["high"] - feat["low"]) / feat["close"].replace(0, np.nan)
 
     # Volume features
     if feat["volume"].sum() > 0:

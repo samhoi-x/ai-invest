@@ -62,6 +62,8 @@ def stochastic(df: pd.DataFrame, k_period: int = 14,
 
 
 def obv(df: pd.DataFrame) -> pd.Series:
+    if df.empty:
+        return pd.Series(dtype=float)
     direction = np.sign(df["close"].diff())
     direction.iloc[0] = 0
     return (direction * df["volume"]).cumsum()
@@ -191,6 +193,14 @@ def compute_technical_signal(df: pd.DataFrame) -> dict:
         dict with 'score' (-1 to +1), 'confidence' (0 to 1), and
         individual indicator scores.
     """
+    if df.empty:
+        return {
+            "score": 0.0,
+            "confidence": 0.0,
+            "details": {"rsi": 0.0, "macd": 0.0, "bollinger": 0.0, "ma_trend": 0.0, "stochastic": 0.0},
+            "indicators": {"RSI": 0, "MACD": 0, "BB_pct": 0.5, "SMA_20": 0, "SMA_50": 0, "ATR": 0},
+        }
+
     indicators = compute_all_indicators(df)
     latest = indicators.iloc[-1]
 

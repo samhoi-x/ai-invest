@@ -104,21 +104,26 @@ class XGBoostPredictor:
         probs = self.model.predict_proba(X_last)[0]
         pred_class = self.model.predict(X_last)[0]
 
+        # Pad probs to 3 elements if model was trained on fewer classes
+        padded = np.zeros(3)
+        for i in range(min(len(probs), 3)):
+            padded[i] = probs[i]
+
         # Convert to signal: -1 (DOWN) to +1 (UP)
-        # probs: [DOWN, FLAT, UP]
-        signal_score = probs[2] - probs[0]  # UP prob - DOWN prob
+        # padded: [DOWN, FLAT, UP]
+        signal_score = padded[2] - padded[0]  # UP prob - DOWN prob
 
         direction_map = {0: "DOWN", 1: "FLAT", 2: "UP"}
 
         return {
             "direction": direction_map.get(pred_class, "FLAT"),
             "probabilities": {
-                "DOWN": round(float(probs[0]), 4),
-                "FLAT": round(float(probs[1]), 4),
-                "UP": round(float(probs[2]), 4),
+                "DOWN": round(float(padded[0]), 4),
+                "FLAT": round(float(padded[1]), 4),
+                "UP": round(float(padded[2]), 4),
             },
             "signal_score": round(float(np.clip(signal_score, -1, 1)), 4),
-            "confidence": round(float(max(probs)), 4),
+            "confidence": round(float(max(padded)), 4),
         }
 
     def save(self, symbol: str):
@@ -386,16 +391,22 @@ class LightGBMPredictor:
 
         probs = self.model.predict_proba(X_last)[0]
         pred_class = self.model.predict(X_last)[0]
-        signal_score = probs[2] - probs[0]
+
+        # Pad probs to 3 elements if model was trained on fewer classes
+        padded = np.zeros(3)
+        for i in range(min(len(probs), 3)):
+            padded[i] = probs[i]
+
+        signal_score = padded[2] - padded[0]
         direction_map = {0: "DOWN", 1: "FLAT", 2: "UP"}
 
         return {
             "direction": direction_map.get(pred_class, "FLAT"),
-            "probabilities": {"DOWN": round(float(probs[0]), 4),
-                              "FLAT": round(float(probs[1]), 4),
-                              "UP": round(float(probs[2]), 4)},
+            "probabilities": {"DOWN": round(float(padded[0]), 4),
+                              "FLAT": round(float(padded[1]), 4),
+                              "UP": round(float(padded[2]), 4)},
             "signal_score": round(float(np.clip(signal_score, -1, 1)), 4),
-            "confidence": round(float(max(probs)), 4),
+            "confidence": round(float(max(padded)), 4),
         }
 
     def save(self, symbol: str):
@@ -435,6 +446,8 @@ def _model_is_stale(trained_at: str | None) -> bool:
 def _load_train_predict(predictor, symbol, df, train_if_needed):
     """Helper: load, retrain if stale, predict."""
     default = {"signal_score": 0, "confidence": 0}
+    if df.empty:
+        return default
     loaded = predictor.load(symbol)
     if (not loaded or _model_is_stale(predictor.trained_at)) and train_if_needed:
         train_result = predictor.train(df)

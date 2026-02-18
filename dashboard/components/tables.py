@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 
 
 def holdings_table(holdings: list[dict], prices: dict[str, float] | None = None):
@@ -15,7 +16,7 @@ def holdings_table(holdings: list[dict], prices: dict[str, float] | None = None)
         df["current_price"] = df["symbol"].map(lambda s: prices.get(s, 0))
         df["market_value"] = df["quantity"] * df["current_price"]
         df["unrealized_pnl"] = (df["current_price"] - df["avg_cost"]) * df["quantity"]
-        df["pnl_pct"] = ((df["current_price"] / df["avg_cost"]) - 1) * 100
+        df["pnl_pct"] = ((df["current_price"] / df["avg_cost"].replace(0, np.nan)) - 1) * 100
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
