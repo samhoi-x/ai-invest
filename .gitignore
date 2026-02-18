@@ -41,6 +41,9 @@ Thumbs.db
 # Streamlit
 .streamlit/
 
+# Logs
+logs/
+
 # Pytest
 .pytest_cache/
 htmlcov/
