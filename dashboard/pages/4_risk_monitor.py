@@ -5,12 +5,13 @@ import pandas as pd
 import numpy as np
 import sys
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from i18n import t
 
 from data.stock_fetcher import get_current_price, fetch_stock_data
-from data.crypto_fetcher import get_crypto_price
+from data.crypto_fetcher import get_crypto_price, fetch_crypto_data
 from db.models import get_holdings, get_risk_alerts
 from strategy.risk_manager import (
     check_drawdown, check_cash_reserve, calculate_stop_loss,
@@ -30,17 +31,44 @@ if not holdings:
     st.info("Add holdings in Portfolio page to see risk analysis.")
     st.stop()
 
-# Fetch prices and compute values
-prices = {}
-total_value = 0
-for h in holdings:
+
+def _fetch_holding_info(h: dict) -> dict:
+    """Fetch current price and ATR for one holding (runs in thread pool)."""
+    # Price
     if h["asset_type"] == "crypto":
         data = get_crypto_price(h["symbol"])
+        try:
+            df = fetch_crypto_data(h["symbol"], days=30)
+        except Exception:
+            df = None
     else:
         data = get_current_price(h["symbol"])
+        try:
+            df = fetch_stock_data(h["symbol"], period="1mo")
+        except Exception:
+            df = None
+
     price = data["price"] if data else h["avg_cost"]
-    prices[h["symbol"]] = price
-    total_value += h["quantity"] * price
+
+    atr_val = None
+    if df is not None and not df.empty:
+        try:
+            atr_val = compute_atr(df).iloc[-1]
+            if pd.isna(atr_val):
+                atr_val = None
+        except Exception:
+            pass
+
+    return {"symbol": h["symbol"], "price": price, "atr": atr_val}
+
+
+# Parallel fetch: price + ATR for every holding in one pass
+with ThreadPoolExecutor(max_workers=min(len(holdings), 8)) as ex:
+    fetch_results = list(ex.map(_fetch_holding_info, holdings))
+
+fetch_map = {r["symbol"]: r for r in fetch_results}
+prices = {r["symbol"]: r["price"] for r in fetch_results}
+total_value = sum(h["quantity"] * fetch_map[h["symbol"]]["price"] for h in holdings)
 
 # Simulate equity curve (from holdings cost to current value)
 total_cost = sum(h["quantity"] * h["avg_cost"] for h in holdings)
@@ -99,20 +127,8 @@ for h in holdings:
     weight = market_val / total_value if total_value > 0 else 0
     pnl_pct = (price / h["avg_cost"] - 1) * 100
 
-    # Calculate stop loss
-    try:
-        if h["asset_type"] == "crypto":
-            from data.crypto_fetcher import fetch_crypto_data
-            df = fetch_crypto_data(h["symbol"], days=30)
-        else:
-            df = fetch_stock_data(h["symbol"], period="1mo")
-        if df is not None and not df.empty:
-            atr_val = compute_atr(df).iloc[-1]
-        else:
-            atr_val = None
-    except Exception:
-        atr_val = None
-
+    # Reuse ATR already fetched in parallel above
+    atr_val = fetch_map[h["symbol"]]["atr"]
     stops = calculate_stop_loss(h["avg_cost"], atr_val)
 
     position_risks.append({
@@ -132,11 +148,17 @@ st.dataframe(pd.DataFrame(position_risks), use_container_width=True, hide_index=
 st.divider()
 st.subheader(t("risk_limit_status"))
 
+current_crypto_value = sum(
+    h["quantity"] * prices[h["symbol"]]
+    for h in holdings if h["asset_type"] == "crypto"
+)
+
 limits = []
 for h in holdings:
     price = prices.get(h["symbol"], h["avg_cost"])
     val = h["quantity"] * price
-    check = check_position_limits(h["symbol"], val, total_value, h["asset_type"])
+    check = check_position_limits(h["symbol"], val, total_value, h["asset_type"],
+                                  current_crypto_value=current_crypto_value)
     status = "✅" if check["allowed"] else "❌"
     limits.append({
         "Symbol": h["symbol"],

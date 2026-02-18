@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import sys
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 # Ensure project root is in path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -32,9 +33,14 @@ col_count = len(index_symbols) + len(crypto_symbols)
 cols = st.columns(col_count)
 
 with st.spinner(t("fetching")):
+    # Fetch all snapshot prices in parallel — get_current_price has no rate limiter
+    with ThreadPoolExecutor(max_workers=len(index_symbols) + len(crypto_symbols)) as ex:
+        index_futures  = {sym: ex.submit(get_current_price, sym) for sym in index_symbols}
+        crypto_futures = {sym: ex.submit(get_crypto_price, sym)   for sym in crypto_symbols}
+
     for i, sym in enumerate(index_symbols):
         with cols[i]:
-            data = get_current_price(sym)
+            data = index_futures[sym].result()
             if data:
                 price_card(sym, data["price"], data["change"], data["change_pct"])
             else:
@@ -42,8 +48,8 @@ with st.spinner(t("fetching")):
 
     for i, sym in enumerate(crypto_symbols):
         with cols[len(index_symbols) + i]:
-            # Prefer WebSocket live data, fallback to REST
-            data = get_live_price(sym) or get_crypto_price(sym)
+            # Prefer WebSocket live data, fallback to REST result
+            data = get_live_price(sym) or crypto_futures[sym].result()
             if data:
                 price_card(sym.split("/")[0], data["price"], data["change"], data["change_pct"])
             else:
@@ -99,11 +105,9 @@ tab_stock, tab_crypto = st.tabs([t("stock"), t("crypto")])
 
 with tab_stock:
     with st.spinner("Loading stock prices..."):
-        stock_data = []
-        for sym in DEFAULT_STOCKS:
-            data = get_current_price(sym)
-            if data:
-                stock_data.append(data)
+        with ThreadPoolExecutor(max_workers=len(DEFAULT_STOCKS)) as ex:
+            stock_results = list(ex.map(get_current_price, DEFAULT_STOCKS))
+        stock_data = [r for r in stock_results if r is not None]
         if stock_data:
             df_stocks = pd.DataFrame(stock_data)
             st.dataframe(
@@ -118,11 +122,9 @@ with tab_stock:
 
 with tab_crypto:
     with st.spinner("Loading crypto prices..."):
-        crypto_data = []
-        for pair in DEFAULT_CRYPTO:
-            data = get_crypto_price(pair)
-            if data:
-                crypto_data.append(data)
+        with ThreadPoolExecutor(max_workers=len(DEFAULT_CRYPTO)) as ex:
+            crypto_results = list(ex.map(get_crypto_price, DEFAULT_CRYPTO))
+        crypto_data = [r for r in crypto_results if r is not None]
         if crypto_data:
             df_crypto = pd.DataFrame(crypto_data)
             st.dataframe(

@@ -5,12 +5,13 @@ import streamlit as st
 
 def price_card(symbol: str, price: float, change: float, change_pct: float):
     """Display a price metric card."""
-    delta_color = "normal" if change >= 0 else "inverse"
+    # "normal": positive delta → green, negative delta → red (correct for prices)
+    # "inverse" would show price drops as green — wrong.
     st.metric(
         label=symbol,
         value=f"${price:,.2f}",
         delta=f"{change:+.2f} ({change_pct:+.2f}%)",
-        delta_color=delta_color,
+        delta_color="normal",
     )
 
 

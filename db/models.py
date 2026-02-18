@@ -26,7 +26,7 @@ def set_setting(key: str, value):
     with get_db() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-            (key, json.dumps(value) if not isinstance(value, str) else value),
+            (key, json.dumps(value)),
         )
 
 
@@ -138,6 +138,12 @@ def get_backtest_results(limit=20):
             "SELECT * FROM backtest_results ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()]
         for r in rows:
-            r["config"] = json.loads(r["config"]) if r["config"] else {}
-            r["equity_curve"] = json.loads(r["equity_curve"]) if r["equity_curve"] else []
+            try:
+                r["config"] = json.loads(r["config"]) if r["config"] else {}
+            except (json.JSONDecodeError, TypeError):
+                r["config"] = {}
+            try:
+                r["equity_curve"] = json.loads(r["equity_curve"]) if r["equity_curve"] else []
+            except (json.JSONDecodeError, TypeError):
+                r["equity_curve"] = []
         return rows

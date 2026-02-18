@@ -186,8 +186,15 @@ def score_stochastic(k: float, d: float) -> float:
         return -0.2
 
 
-def compute_technical_signal(df: pd.DataFrame) -> dict:
+def compute_technical_signal(df: pd.DataFrame,
+                             _indicators: pd.DataFrame = None) -> dict:
     """Compute a composite technical signal from the latest data point.
+
+    Args:
+        df: OHLCV DataFrame.
+        _indicators: Optional pre-computed indicators DataFrame from
+            ``compute_all_indicators``.  Pass this when the caller has
+            already computed indicators to avoid re-doing the work.
 
     Returns:
         dict with 'score' (-1 to +1), 'confidence' (0 to 1), and
@@ -201,7 +208,7 @@ def compute_technical_signal(df: pd.DataFrame) -> dict:
             "indicators": {"RSI": 0, "MACD": 0, "BB_pct": 0.5, "SMA_20": 0, "SMA_50": 0, "ATR": 0},
         }
 
-    indicators = compute_all_indicators(df)
+    indicators = _indicators if _indicators is not None else compute_all_indicators(df)
     latest = indicators.iloc[-1]
 
     scores = {
@@ -218,20 +225,25 @@ def compute_technical_signal(df: pd.DataFrame) -> dict:
     weights = {"rsi": 0.20, "macd": 0.25, "bollinger": 0.15, "ma_trend": 0.25, "stochastic": 0.15}
     composite = sum(scores[k] * weights[k] for k in scores)
 
-    # Confidence: based on agreement among indicators
+    # Confidence: scaled by both consensus strength and how many indicators have a view.
+    # participation: fraction of indicators that expressed a non-neutral opinion.
+    # agreement:     how strongly those indicators agree with each other (0=split, 1=unanimous).
+    # When no indicator has a view, confidence is 0 — not an artificial 0.4 floor.
     directions = [1 if s > 0.1 else -1 if s < -0.1 else 0 for s in scores.values()]
     non_neutral = [d for d in directions if d != 0]
     if non_neutral:
-        agreement = abs(sum(non_neutral)) / len(non_neutral)
+        agreement    = abs(sum(non_neutral)) / len(non_neutral)
+        participation = len(non_neutral) / len(directions)
+        confidence = min(1.0, participation * (0.3 + 0.7 * agreement))
     else:
-        agreement = 0.0
-    confidence = min(1.0, 0.4 + agreement * 0.6)
+        confidence = 0.0
 
     return {
         "score": round(max(-1.0, min(1.0, composite)), 4),
         "confidence": round(confidence, 4),
         "details": {k: round(v, 4) for k, v in scores.items()},
         "indicators": {
+            "close": round(latest["close"], 2),
             "RSI": round(latest.get("RSI", 0), 2),
             "MACD": round(latest.get("MACD", 0), 4),
             "BB_pct": round(latest.get("BB_pct", 0.5), 4),

@@ -30,10 +30,12 @@ with vcol1:
     stats = get_accuracy_stats()
     if stats["total_evaluated"] > 0:
         acols = st.columns(4)
+        buy_data = stats["by_direction"].get("BUY", {})
         acols[0].metric("Total Evaluated", stats["total_evaluated"])
         acols[1].metric("Correct", stats["correct"])
         acols[2].metric("Overall Accuracy", f"{stats['overall_accuracy']:.0%}")
-        acols[3].metric("Sample Size", stats["total_evaluated"])
+        acols[3].metric("BUY Accuracy", f"{buy_data.get('accuracy', 0):.0%}",
+                        f"n={buy_data.get('total', 0)}")
 
         # Accuracy by direction
         st.divider()

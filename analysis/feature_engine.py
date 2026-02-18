@@ -44,10 +44,6 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         feat["volume_ratio"] = 1.0
 
-    # Momentum features
-    feat["roc_5"] = feat["close"].pct_change(5)
-    feat["roc_10"] = feat["close"].pct_change(10)
-
     # Day of week (if datetime index)
     if hasattr(feat.index, "dayofweek"):
         feat["day_of_week"] = feat.index.dayofweek

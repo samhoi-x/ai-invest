@@ -12,7 +12,8 @@ def get_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # journal_mode=WAL is a persistent database-level setting; set once in
+    # init_db() so we avoid the round-trip on every connection.
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -34,6 +35,9 @@ def get_db():
 def init_db():
     """Create all tables if they don't exist."""
     with get_db() as conn:
+        # Set WAL mode once; it persists at the database file level across
+        # all future connections, so there is no need to repeat it per-connection.
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript("""
         -- Price data cache
         CREATE TABLE IF NOT EXISTS price_cache (
@@ -154,11 +158,19 @@ def init_db():
             acknowledged INTEGER DEFAULT 0
         );
 
-        -- Create indexes
-        CREATE INDEX IF NOT EXISTS idx_price_symbol ON price_cache(symbol);
-        CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol);
+        -- Indexes
+        CREATE INDEX IF NOT EXISTS idx_price_symbol   ON price_cache(symbol);
+        CREATE INDEX IF NOT EXISTS idx_signals_symbol  ON signals(symbol);
         CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at);
-        CREATE INDEX IF NOT EXISTS idx_news_symbol ON news_cache(symbol);
+        CREATE INDEX IF NOT EXISTS idx_news_symbol     ON news_cache(symbol);
+
+        -- Indexes for accuracy_tracker queries
+        -- get_unchecked_signals: WHERE outcome_checked_at IS NULL AND created_at <= ?
+        CREATE INDEX IF NOT EXISTS idx_signals_unchecked
+            ON signals(outcome_checked_at, created_at);
+        -- compute_adaptive_weights: WHERE outcome_correct IS NOT NULL AND direction != 'HOLD'
+        CREATE INDEX IF NOT EXISTS idx_signals_outcome_dir
+            ON signals(outcome_correct, direction);
         """)
 
 

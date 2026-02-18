@@ -1,8 +1,40 @@
 """Multi-factor signal fusion engine."""
 
+import time
+import logging
 import numpy as np
 from config import (SIGNAL_WEIGHTS, BUY_THRESHOLD, BUY_CONFIDENCE_MIN,
                     SELL_THRESHOLD, SELL_CONFIDENCE_MIN)
+
+logger = logging.getLogger(__name__)
+
+# ── Adaptive-weight cache ─────────────────────────────────────────────
+# Refreshed at most once per hour to avoid DB hits on every signal call.
+_WEIGHTS_TTL = 3600  # seconds
+_weights_cache: dict = {"weights": None, "expires_at": 0.0}
+
+
+def get_adaptive_weights() -> dict:
+    """Return factor weights, preferring history-derived values over config defaults.
+
+    Calls ``accuracy_tracker.compute_adaptive_weights`` at most once per hour.
+    Falls back to config ``SIGNAL_WEIGHTS`` if the tracker raises any error or
+    there is insufficient history.
+    """
+    now = time.monotonic()
+    if _weights_cache["weights"] is not None and now < _weights_cache["expires_at"]:
+        return _weights_cache["weights"]
+
+    try:
+        from analysis.accuracy_tracker import compute_adaptive_weights
+        weights = compute_adaptive_weights()
+    except Exception as exc:
+        logger.warning("get_adaptive_weights: falling back to config defaults (%s)", exc)
+        weights = dict(SIGNAL_WEIGHTS)
+
+    _weights_cache["weights"] = weights
+    _weights_cache["expires_at"] = now + _WEIGHTS_TTL
+    return weights
 
 
 def combine_signals(technical: dict, sentiment: dict, ml: dict) -> dict:
@@ -17,7 +49,7 @@ def combine_signals(technical: dict, sentiment: dict, ml: dict) -> dict:
         dict with 'direction' (BUY/SELL/HOLD), 'strength' (-1 to +1),
         'confidence' (0 to 1), and factor breakdown.
     """
-    w = SIGNAL_WEIGHTS
+    w = get_adaptive_weights()
 
     t_score = technical.get("score", 0)
     s_score = sentiment.get("score", 0)
@@ -79,6 +111,7 @@ def combine_signals(technical: dict, sentiment: dict, ml: dict) -> dict:
         "sentiment_score": round(s_score, 4),
         "ml_score": round(m_score, 4),
         "factor_agreement": round(1.0 - score_std, 4),
+        "weights_used": {k: round(v, 4) for k, v in w.items()},
         "thresholds": {
             "buy": BUY_THRESHOLD,
             "sell": SELL_THRESHOLD,

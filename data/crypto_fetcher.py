@@ -4,6 +4,7 @@ import ccxt
 import pandas as pd
 import time
 import logging
+import threading
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -21,31 +22,31 @@ _EXCHANGE_CLASSES = [
 
 _active_exchange = None
 _active_name = None
+_exchange_lock = threading.Lock()
 
 
 def _get_exchange():
     """Get a working exchange, with fallback across multiple providers."""
     global _active_exchange, _active_name
-    if _active_exchange is not None:
-        return _active_exchange
+    with _exchange_lock:
+        if _active_exchange is not None:
+            return _active_exchange
 
-    for name, factory in _EXCHANGE_CLASSES:
-        try:
-            ex = factory()
-            ex.fetch_ticker("BTC/USDT")
-            _active_exchange = ex
-            _active_name = name
-            logger.info("Using crypto exchange: %s", name)
-            return ex
-        except Exception as e:
-            logger.info("Exchange %s unavailable: %s", name, e)
-            continue
+        for name, factory in _EXCHANGE_CLASSES:
+            try:
+                ex = factory()
+                ex.fetch_ticker("BTC/USDT")
+                _active_exchange = ex
+                _active_name = name
+                logger.info("Using crypto exchange: %s", name)
+                return ex
+            except Exception as e:
+                logger.info("Exchange %s unavailable: %s", name, e)
+                continue
 
-    # All failed — return first as default, will error on use
-    logger.warning("No crypto exchange available")
-    _active_exchange = _EXCHANGE_CLASSES[0][1]()
-    _active_name = _EXCHANGE_CLASSES[0][0]
-    return _active_exchange
+        # All failed — do NOT cache so the next call retries the exchange list
+        logger.warning("No crypto exchange available")
+        return _EXCHANGE_CLASSES[0][1]()
 
 
 def _retry(func, retries=_MAX_RETRIES):
@@ -112,7 +113,7 @@ def fetch_multiple_crypto(pairs: list[str], timeframe: str = "1d",
         except Exception as e:
             logger.warning("Failed to fetch crypto data for %s: %s", pair, e)
             continue
-        time.sleep(0.5)
+        # ccxt handles rate-limiting via enableRateLimit=True; no manual sleep needed
     return results
 
 
@@ -142,5 +143,5 @@ def get_multiple_crypto_prices(pairs: list[str]) -> list[dict]:
         price = get_crypto_price(pair)
         if price:
             results.append(price)
-        time.sleep(0.5)
+        # ccxt handles rate-limiting via enableRateLimit=True; no manual sleep needed
     return results

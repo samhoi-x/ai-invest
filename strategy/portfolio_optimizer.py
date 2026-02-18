@@ -69,7 +69,7 @@ def get_rebalance_suggestions(current_weights: dict[str, float],
     Returns:
         List of suggested trades to reach target allocation.
     """
-    all_symbols = set(list(current_weights.keys()) + list(optimal_weights.keys()))
+    all_symbols = set(current_weights) | set(optimal_weights)
     suggestions = []
 
     for symbol in sorted(all_symbols):

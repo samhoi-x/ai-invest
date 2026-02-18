@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime, timedelta
 
+import numpy as np
 import pandas as pd
 
 from db.database import get_db
@@ -44,12 +45,26 @@ def evaluate_signal(signal: dict) -> dict | None:
         logger.warning("Could not parse signal date '%s' for signal %s", created, signal.get("id"))
         return None
 
-    # Fetch recent data
+    # Fetch enough data to cover the signal date plus 10 forward trading days.
+    # Signals may be queued for weeks before being evaluated, so derive the
+    # required lookback from the actual signal age rather than using a fixed window.
+    signal_age_days = max(0, (datetime.utcnow() - signal_date.to_pydatetime().replace(tzinfo=None)).days)
+    fetch_days = signal_age_days + 20  # signal age + buffer for 10 trading days forward
+
     try:
         if "/" in symbol:
-            df = fetch_crypto_data(symbol, days=30)
+            df = fetch_crypto_data(symbol, days=fetch_days)
         else:
-            df = fetch_stock_data(symbol, period="1mo")
+            # yfinance period strings: approximate calendar days → nearest valid period
+            if fetch_days <= 30:
+                period = "1mo"
+            elif fetch_days <= 90:
+                period = "3mo"
+            elif fetch_days <= 180:
+                period = "6mo"
+            else:
+                period = "1y"
+            df = fetch_stock_data(symbol, period=period)
     except Exception:
         logger.warning("Failed to fetch price data for %s during accuracy evaluation", symbol)
         return None
@@ -60,7 +75,7 @@ def evaluate_signal(signal: dict) -> dict | None:
     # Find signal date price
     df.index = pd.to_datetime(df.index)
     if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
+        df.index = df.index.tz_convert(None)  # convert to UTC then drop tz
 
     # Find closest trading day on or after signal date
     mask = df.index >= signal_date.normalize()
@@ -74,18 +89,17 @@ def evaluate_signal(signal: dict) -> dict | None:
         return None
 
     # 5-day and 10-day forward returns
-    future_5 = df.index[df.index > base_idx]
-    future_10 = df.index[df.index > base_idx]
+    future_dates = df.index[df.index > base_idx]
 
     return_5d = None
     return_10d = None
 
-    if len(future_5) >= 5:
-        price_5d = df.loc[future_5[4], "close"]
+    if len(future_dates) >= 5:
+        price_5d = df.loc[future_dates[4], "close"]
         return_5d = (price_5d / base_price) - 1
 
-    if len(future_10) >= 10:
-        price_10d = df.loc[future_10[9], "close"]
+    if len(future_dates) >= 10:
+        price_10d = df.loc[future_dates[9], "close"]
         return_10d = (price_10d / base_price) - 1
 
     # Determine if signal was correct (using 5-day return)
@@ -199,3 +213,89 @@ def get_accuracy_stats() -> dict:
         "by_direction": stats_by_dir,
         "by_factor": factor_data,
     }
+
+
+def compute_adaptive_weights(min_samples: int = 30) -> dict:
+    """Estimate per-factor weights from historical signal outcomes.
+
+    Method: for each factor, compute the point-biserial correlation between
+    (direction-signed factor score) and outcome_correct.  Factors with higher
+    positive correlation get proportionally more weight.  The result is blended
+    50/50 with the config priors so weights shift gradually and never collapse
+    to zero.  Falls back to config defaults when there are fewer than
+    ``min_samples`` evaluated non-HOLD signals.
+
+    Returns:
+        dict with keys 'technical', 'sentiment', 'ml' that sum to 1.0.
+    """
+    from config import SIGNAL_WEIGHTS
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT technical_score, sentiment_score, ml_score,
+                   direction, outcome_correct
+            FROM signals
+            WHERE outcome_correct IS NOT NULL
+              AND direction != 'HOLD'
+        """).fetchall()
+
+    if len(rows) < min_samples:
+        logger.debug(
+            "compute_adaptive_weights: only %d samples (need %d), using config defaults",
+            len(rows), min_samples,
+        )
+        return dict(SIGNAL_WEIGHTS)
+
+    tech_scores = np.array([r["technical_score"] or 0.0 for r in rows])
+    sent_scores = np.array([r["sentiment_score"] or 0.0 for r in rows])
+    ml_scores   = np.array([r["ml_score"]        or 0.0 for r in rows])
+    correct     = np.array([r["outcome_correct"]         for r in rows], dtype=float)
+
+    # Sign-adjust factor scores so that a BUY signal with positive score counts
+    # as "aligned" and a SELL signal with negative score also counts as "aligned".
+    dir_sign = np.array([1.0 if r["direction"] == "BUY" else -1.0 for r in rows])
+    tech_aligned = tech_scores * dir_sign
+    sent_aligned = sent_scores * dir_sign
+    ml_aligned   = ml_scores   * dir_sign
+
+    def _safe_corr(x: np.ndarray, y: np.ndarray) -> float:
+        """Point-biserial correlation, floored at 0 (only reward, no punishment)."""
+        if x.std() < 1e-9:
+            return 0.0
+        return float(max(0.0, np.corrcoef(x, y)[0, 1]))
+
+    tech_corr = _safe_corr(tech_aligned, correct)
+    sent_corr = _safe_corr(sent_aligned, correct)
+    ml_corr   = _safe_corr(ml_aligned,   correct)
+
+    total_corr = tech_corr + sent_corr + ml_corr
+
+    if total_corr < 1e-9:
+        # All correlations are zero or negative — stay with config defaults.
+        logger.debug("compute_adaptive_weights: no positive correlations found, using defaults")
+        return dict(SIGNAL_WEIGHTS)
+
+    data_w = {
+        "technical": tech_corr / total_corr,
+        "sentiment": sent_corr / total_corr,
+        "ml":        ml_corr   / total_corr,
+    }
+
+    # Bayesian shrinkage: 50 % data-driven, 50 % config prior
+    blended = {
+        k: 0.5 * data_w[k] + 0.5 * SIGNAL_WEIGHTS[k]
+        for k in SIGNAL_WEIGHTS
+    }
+
+    # Re-normalise to guarantee weights sum to exactly 1.0
+    total = sum(blended.values())
+    result = {k: round(v / total, 4) for k, v in blended.items()}
+
+    logger.info(
+        "Adaptive weights (n=%d): tech=%.3f sent=%.3f ml=%.3f "
+        "(corr: tech=%.3f sent=%.3f ml=%.3f)",
+        len(rows),
+        result["technical"], result["sentiment"], result["ml"],
+        tech_corr, sent_corr, ml_corr,
+    )
+    return result

@@ -4,12 +4,13 @@ import streamlit as st
 import pandas as pd
 import sys
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from i18n import t
 
 from data.stock_fetcher import get_current_price, fetch_stock_data
-from data.crypto_fetcher import get_crypto_price
+from data.crypto_fetcher import get_crypto_price, fetch_crypto_data
 from db.models import get_holdings, upsert_holding, remove_holding, add_transaction, get_transactions
 from strategy.portfolio_optimizer import optimize_portfolio, get_rebalance_suggestions, build_returns_from_prices
 from dashboard.components.charts import pie_chart
@@ -48,26 +49,22 @@ if not holdings:
     st.info("No holdings yet. Add positions above to get started.")
     st.stop()
 
-# Fetch current prices
-prices = {}
-total_value = 0
-total_cost = 0
-for h in holdings:
-    sym = h["symbol"]
-    if h["asset_type"] == "crypto":
-        data = get_crypto_price(sym)
-    else:
-        data = get_current_price(sym)
+# Fetch current prices in parallel
+def _fetch_price(h: dict) -> tuple[str, float]:
+    try:
+        if h["asset_type"] == "crypto":
+            data = get_crypto_price(h["symbol"])
+        else:
+            data = get_current_price(h["symbol"])
+        return h["symbol"], data["price"] if data else h["avg_cost"]
+    except Exception:
+        return h["symbol"], h["avg_cost"]
 
-    if data:
-        prices[sym] = data["price"]
-    else:
-        prices[sym] = h["avg_cost"]
+with ThreadPoolExecutor(max_workers=min(len(holdings), 8)) as ex:
+    prices = dict(ex.map(_fetch_price, holdings))
 
-    market_val = h["quantity"] * prices[sym]
-    cost_val = h["quantity"] * h["avg_cost"]
-    total_value += market_val
-    total_cost += cost_val
+total_value = sum(h["quantity"] * prices[h["symbol"]] for h in holdings)
+total_cost = sum(h["quantity"] * h["avg_cost"] for h in holdings)
 
 day_pnl = total_value - total_cost  # Simplified
 total_return = (total_value / total_cost - 1) * 100 if total_cost > 0 else 0
@@ -127,7 +124,6 @@ if st.button(t("run_optimization"), type="primary"):
             sym = h["symbol"]
             try:
                 if h["asset_type"] == "crypto":
-                    from data.crypto_fetcher import fetch_crypto_data
                     df = fetch_crypto_data(sym, days=365)
                 else:
                     df = fetch_stock_data(sym, period="1y")

@@ -69,9 +69,10 @@ if generate:
             st.error(f"Data fetch error: {e}")
             st.stop()
 
-        # 2. Technical analysis
+        # 2. Technical analysis — compute indicators once and reuse for the chart
         st.info("Computing technical indicators...")
-        tech_signal = compute_technical_signal(df)
+        indicators_df = compute_all_indicators(df)
+        tech_signal = compute_technical_signal(df, _indicators=indicators_df)
 
         # 3. Sentiment analysis
         st.info("Analyzing market sentiment...")
@@ -171,10 +172,9 @@ if generate:
     with st.expander(f"🤖 {t('ml_details')}"):
         st.json(ml_signal)
 
-    # Chart with indicators
+    # Chart with indicators (reuse indicators_df computed during signal generation)
     st.divider()
     st.subheader(t("price_chart_indicators"))
-    indicators_df = compute_all_indicators(df)
     overlay = {
         "SMA_20": indicators_df.get("SMA_20"),
         "SMA_50": indicators_df.get("SMA_50"),

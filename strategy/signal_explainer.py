@@ -133,8 +133,9 @@ def _explain_indicators(tech_signal: dict, lang: str) -> list[str]:
     macd = indicators.get("MACD", 0)
     if macd > 0:
         explanations.append(_txt("macd_bullish", lang, value=macd))
-    else:
+    elif macd < 0:
         explanations.append(_txt("macd_bearish", lang, value=macd))
+    # macd == 0 is neutral; no explanation added
 
     # Bollinger Band %
     bb_pct = indicators.get("BB_pct", 0.5)

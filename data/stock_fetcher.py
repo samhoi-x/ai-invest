@@ -51,7 +51,7 @@ def fetch_stock_data(symbol: str, period: str = "1y", interval: str = "1d") -> p
         return pd.DataFrame()
     df.index = pd.to_datetime(df.index)
     if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
+        df.index = df.index.tz_convert(None)  # convert to UTC then drop tz
     df = df.rename(columns={
         "Open": "open", "High": "high", "Low": "low",
         "Close": "close", "Volume": "volume",
@@ -115,6 +115,8 @@ def get_current_price(symbol: str) -> dict | None:
             return None
         current = hist["Close"].iloc[-1]
         prev = hist["Close"].iloc[-2]
+        if not prev:
+            return None
         change = current - prev
         change_pct = (change / prev) * 100
         return {

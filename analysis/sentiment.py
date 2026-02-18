@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-from functools import lru_cache
 
 # Lazy-load transformers to avoid slow startup
 _pipeline = None
@@ -20,6 +19,15 @@ def _get_pipeline():
     return _pipeline
 
 
+def _label_to_value(label: str, score: float) -> float:
+    """Convert FinBERT label + confidence score to a signed [-1, +1] sentiment value."""
+    if label == "positive":
+        return score
+    if label == "negative":
+        return -score
+    return 0.0
+
+
 def analyze_text(text: str) -> dict:
     """Analyze sentiment of a single text.
 
@@ -35,19 +43,10 @@ def analyze_text(text: str) -> dict:
 
     label = result["label"]
     score = result["score"]
-
-    # Convert to -1 to +1 scale
-    if label == "positive":
-        sentiment_value = score
-    elif label == "negative":
-        sentiment_value = -score
-    else:
-        sentiment_value = 0.0
-
     return {
         "label": label,
         "score": score,
-        "sentiment_value": round(sentiment_value, 4),
+        "sentiment_value": round(_label_to_value(label, score), 4),
     }
 
 
@@ -67,17 +66,11 @@ def analyze_texts(texts: list[str]) -> list[dict]:
             for text, res in zip(batch, batch_results):
                 label = res["label"]
                 score = res["score"]
-                if label == "positive":
-                    sv = score
-                elif label == "negative":
-                    sv = -score
-                else:
-                    sv = 0.0
                 results.append({
                     "text": text[:100],
                     "label": label,
                     "score": score,
-                    "sentiment_value": round(sv, 4),
+                    "sentiment_value": round(_label_to_value(label, score), 4),
                 })
     return results
 

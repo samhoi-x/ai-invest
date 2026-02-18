@@ -36,11 +36,14 @@ class BacktestEngine:
         if signal_func is None:
             signal_func = compute_technical_signal
 
+        from analysis.technical import atr as calc_atr
+
         cash = self.initial_capital
         positions = {}  # symbol → {'quantity', 'entry_price', 'stop_loss'}
         trades = []
         equity_curve = []
         dates = []
+        running_peak = self.initial_capital  # maintained incrementally — O(1) per step
 
         # Align all data to common dates
         all_dates = set()
@@ -57,6 +60,7 @@ class BacktestEngine:
                 else:
                     port_value += pos["quantity"] * pos["entry_price"]
 
+            running_peak = max(running_peak, port_value)
             equity_curve.append(port_value)
             dates.append(date)
 
@@ -89,11 +93,9 @@ class BacktestEngine:
                 del positions[sym]
 
             # Check drawdown protection
-            if equity_curve:
-                peak = max(equity_curve)
-                current_dd = (peak - port_value) / peak
-                if current_dd >= RISK["drawdown_halt"]:
-                    continue  # Skip new signals
+            current_dd = (running_peak - port_value) / running_peak if running_peak > 0 else 0
+            if current_dd >= RISK["drawdown_halt"]:
+                continue  # Skip new signals
 
             # Generate signals for each symbol
             for sym, df in price_data.items():
@@ -126,7 +128,6 @@ class BacktestEngine:
                     if cost <= cash:
                         cash -= cost
                         # ATR-based stop loss
-                        from analysis.technical import atr as calc_atr
                         atr_val = calc_atr(history).iloc[-1]
                         stop = price - STOP_LOSS["atr_multiplier"] * atr_val if not pd.isna(atr_val) else price * 0.95
 

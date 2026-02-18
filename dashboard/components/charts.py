@@ -4,6 +4,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 
+# Shared color palette for line/indicator overlays (blue-first, financial convention)
+_LINE_COLORS = ["#2196F3", "#FF9800", "#4CAF50", "#F44336", "#9C27B0", "#00BCD4"]
+
 
 def candlestick_chart(df: pd.DataFrame, symbol: str, indicators: dict | None = None,
                       height: int = 600) -> go.Figure:
@@ -31,10 +34,9 @@ def candlestick_chart(df: pd.DataFrame, symbol: str, indicators: dict | None = N
 
     # Overlay indicators
     if indicators:
-        colors = ["#FF9800", "#2196F3", "#9C27B0", "#4CAF50", "#F44336", "#00BCD4"]
         for i, (name, series) in enumerate(indicators.items()):
             if series is not None and not series.empty:
-                color = colors[i % len(colors)]
+                color = _LINE_COLORS[i % len(_LINE_COLORS)]
                 if name.startswith("BB_"):
                     dash = "dash" if "upper" in name or "lower" in name else "solid"
                     fig.add_trace(go.Scatter(
@@ -69,12 +71,11 @@ def line_chart(series_dict: dict, title: str = "", height: int = 400,
                y_title: str = "") -> go.Figure:
     """Create a multi-line chart from a dict of name→Series."""
     fig = go.Figure()
-    colors = ["#2196F3", "#FF9800", "#4CAF50", "#F44336", "#9C27B0", "#00BCD4"]
     for i, (name, series) in enumerate(series_dict.items()):
         if series is not None:
             fig.add_trace(go.Scatter(
                 x=series.index, y=series, name=name,
-                line=dict(color=colors[i % len(colors)], width=2),
+                line=dict(color=_LINE_COLORS[i % len(_LINE_COLORS)], width=2),
             ))
     fig.update_layout(
         title=title, height=height, template="plotly_dark",
@@ -99,9 +100,8 @@ def pie_chart(labels: list, values: list, title: str = "",
     return fig
 
 
-def bar_chart(x, y, title: str = "", color: str = "#2196F3",
-              height: int = 400) -> go.Figure:
-    """Create a bar chart."""
+def bar_chart(x, y, title: str = "", height: int = 400) -> go.Figure:
+    """Create a bar chart with sign-based colouring (green ≥ 0, red < 0)."""
     colors = [("#26a69a" if v >= 0 else "#ef5350") for v in y]
     fig = go.Figure(go.Bar(x=x, y=y, marker_color=colors))
     fig.update_layout(

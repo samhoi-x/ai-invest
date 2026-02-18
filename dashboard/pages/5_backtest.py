@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 import sys
 from pathlib import Path
@@ -129,7 +130,6 @@ if run_bt:
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Drawdown Chart ────────────────────────────────────────────────
-    import numpy as np
     eq_arr = np.array(results["equity_curve"])
     peak = np.maximum.accumulate(eq_arr)
     drawdown = (peak - eq_arr) / peak * -100

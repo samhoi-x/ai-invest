@@ -1,7 +1,6 @@
 """Scheduler: automatic data refresh and daily signal generation."""
 
 import threading
-import time
 import logging
 from datetime import datetime
 
@@ -12,6 +11,58 @@ logger = logging.getLogger(__name__)
 
 _scheduler_thread = None
 _running = False
+_stop_event = threading.Event()
+
+_NEUTRAL_SIGNAL = {"score": 0, "confidence": 0.3}
+
+
+def _build_sentiment_signal(symbol: str, asset_type: str) -> dict:
+    """Fetch news + social data and compute sentiment signal.
+
+    Falls back to a neutral placeholder if APIs are unavailable or fail.
+    """
+    try:
+        from data.news_fetcher import fetch_news
+        from data.social_fetcher import fetch_reddit_posts
+        from analysis.sentiment import compute_sentiment_signal
+
+        articles = fetch_news(symbol)
+        posts = fetch_reddit_posts(symbol, asset_type=asset_type)
+        social_texts = [p["title"] for p in posts if p.get("title")]
+
+        if articles or social_texts:
+            result = compute_sentiment_signal(articles, social_texts)
+            logger.debug(
+                "Sentiment for %s: score=%.3f conf=%.3f (news=%d social=%d)",
+                symbol, result["score"], result["confidence"],
+                result.get("news_count", 0), result.get("social_count", 0),
+            )
+            return result
+    except Exception as e:
+        logger.warning("Sentiment signal failed for %s: %s", symbol, e)
+
+    return _NEUTRAL_SIGNAL
+
+
+def _build_ml_signal(symbol: str, df) -> dict:
+    """Compute combined ML signal (XGBoost + LightGBM + LSTM).
+
+    Loads saved models and only retrains when the model is stale.
+    Falls back to a neutral placeholder on any error.
+    """
+    try:
+        from analysis.ml_models import compute_ml_signal
+
+        result = compute_ml_signal(df, symbol, train_if_needed=True)
+        logger.debug(
+            "ML signal for %s: score=%.3f conf=%.3f",
+            symbol, result["score"], result["confidence"],
+        )
+        return result
+    except Exception as e:
+        logger.warning("ML signal failed for %s: %s", symbol, e)
+
+    return _NEUTRAL_SIGNAL
 
 
 def _run_signal_scan():
@@ -31,36 +82,38 @@ def _run_signal_scan():
 
     all_signals = []
 
+    def _process_symbol(symbol: str, df, asset_type: str):
+        """Compute and persist a signal for one symbol (captures local imports)."""
+        cache_price_data(symbol, df, asset_type)
+        tech_signal = compute_technical_signal(df)
+        sentiment_signal = _build_sentiment_signal(symbol, asset_type)
+        ml_signal = _build_ml_signal(symbol, df)
+        combined = combine_signals(tech_signal, sentiment_signal, ml_signal)
+        combined["symbol"] = symbol
+        save_signal(
+            symbol=symbol, signal_type="scheduled",
+            direction=combined["direction"], strength=combined["strength"],
+            confidence=combined["confidence"],
+            technical_score=combined["technical_score"],
+            sentiment_score=sentiment_signal["score"],
+            ml_score=ml_signal["score"],
+        )
+        if combined["direction"] in ("BUY", "SELL"):
+            notify_signal(symbol, combined)
+        all_signals.append(combined)
+        logger.info("Scheduled signal for %s: %s (tech=%.2f sent=%.2f ml=%.2f)",
+                    symbol, combined["direction"],
+                    combined["technical_score"],
+                    sentiment_signal["score"],
+                    ml_signal["score"])
+
     # Stocks
     for sym in stocks:
         try:
             df = fetch_stock_data(sym, period="2y")
             if df is None or df.empty:
                 continue
-            cache_price_data(sym, df, "stock")
-
-            tech_signal = compute_technical_signal(df)
-            # Use tech-only for scheduled scans (sentiment/ML too slow for batch)
-            combined = combine_signals(
-                tech_signal,
-                {"score": 0, "confidence": 0.3},
-                {"score": 0, "confidence": 0.3},
-            )
-            combined["symbol"] = sym
-
-            save_signal(
-                symbol=sym, signal_type="scheduled",
-                direction=combined["direction"], strength=combined["strength"],
-                confidence=combined["confidence"],
-                technical_score=combined["technical_score"],
-                sentiment_score=0, ml_score=0,
-            )
-
-            if combined["direction"] in ("BUY", "SELL"):
-                notify_signal(sym, combined)
-
-            all_signals.append(combined)
-            logger.info("Scheduled signal for %s: %s", sym, combined["direction"])
+            _process_symbol(sym, df, "stock")
         except Exception as e:
             logger.warning("Scheduled scan failed for %s: %s", sym, e)
 
@@ -70,29 +123,7 @@ def _run_signal_scan():
             df = fetch_crypto_data(pair, days=730)
             if df is None or df.empty:
                 continue
-            cache_price_data(pair, df, "crypto")
-
-            tech_signal = compute_technical_signal(df)
-            combined = combine_signals(
-                tech_signal,
-                {"score": 0, "confidence": 0.3},
-                {"score": 0, "confidence": 0.3},
-            )
-            combined["symbol"] = pair
-
-            save_signal(
-                symbol=pair, signal_type="scheduled",
-                direction=combined["direction"], strength=combined["strength"],
-                confidence=combined["confidence"],
-                technical_score=combined["technical_score"],
-                sentiment_score=0, ml_score=0,
-            )
-
-            if combined["direction"] in ("BUY", "SELL"):
-                notify_signal(pair, combined)
-
-            all_signals.append(combined)
-            logger.info("Scheduled signal for %s: %s", pair, combined["direction"])
+            _process_symbol(pair, df, "crypto")
         except Exception as e:
             logger.warning("Scheduled scan failed for %s: %s", pair, e)
 
@@ -113,11 +144,9 @@ def _scheduler_loop(interval_minutes: int):
         except Exception as e:
             logger.error("Scheduler error: %s", e)
 
-        # Sleep in small increments so we can stop quickly
-        for _ in range(interval_minutes * 60):
-            if not _running:
-                break
-            time.sleep(1)
+        # Block until the interval elapses or stop_scheduler() sets the event
+        _stop_event.wait(timeout=interval_minutes * 60)
+        _stop_event.clear()
 
 
 def start_scheduler(interval_minutes: int = 60):
@@ -128,6 +157,7 @@ def start_scheduler(interval_minutes: int = 60):
         return
 
     _running = True
+    _stop_event.clear()
     _scheduler_thread = threading.Thread(
         target=_scheduler_loop,
         args=(interval_minutes,),
@@ -142,6 +172,7 @@ def stop_scheduler():
     """Stop the background scheduler."""
     global _running
     _running = False
+    _stop_event.set()  # Wake the sleeping loop immediately
     logger.info("Scheduler stopped")
 
 

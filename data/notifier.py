@@ -7,6 +7,30 @@ from config import PAGE_TITLE
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache for Telegram credentials.
+# Avoids hitting the DB on every notification call during a scan.
+_tg_cache: dict = {"bot_token": None, "chat_id": None}
+
+
+def _get_telegram_creds() -> tuple[str, str]:
+    """Return (bot_token, chat_id), reading from DB only when not yet cached."""
+    if _tg_cache["bot_token"] is None:
+        try:
+            from db.models import get_setting
+            _tg_cache["bot_token"] = get_setting("telegram_bot_token", "")
+            _tg_cache["chat_id"]   = get_setting("telegram_chat_id", "")
+        except Exception as e:
+            logger.warning("Failed to load Telegram settings: %s", e)
+            _tg_cache["bot_token"] = ""
+            _tg_cache["chat_id"]   = ""
+    return _tg_cache["bot_token"], _tg_cache["chat_id"]
+
+
+def invalidate_telegram_cache():
+    """Call this after saving new Telegram credentials so they are re-read."""
+    _tg_cache["bot_token"] = None
+    _tg_cache["chat_id"]   = None
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  Telegram Notifier
@@ -125,12 +149,9 @@ def format_daily_summary(signals: list[dict]) -> str:
 def notify_signal(symbol: str, signal: dict, bot_token: str = "", chat_id: str = ""):
     """Send signal notification via all configured channels."""
     if not bot_token or not chat_id:
-        try:
-            from db.models import get_setting
-            bot_token = bot_token or get_setting("telegram_bot_token", "")
-            chat_id = chat_id or get_setting("telegram_chat_id", "")
-        except Exception as e:
-            logger.warning("Failed to load Telegram settings for signal notification: %s", e)
+        cached_token, cached_chat = _get_telegram_creds()
+        bot_token = bot_token or cached_token
+        chat_id   = chat_id   or cached_chat
 
     if bot_token and chat_id:
         msg = format_signal_message(symbol, signal)
@@ -140,14 +161,7 @@ def notify_signal(symbol: str, signal: dict, bot_token: str = "", chat_id: str =
 def notify_risk_alert(alert_type: str, severity: str, message: str,
                        symbol: str = None):
     """Send risk alert via all configured channels."""
-    try:
-        from db.models import get_setting
-        bot_token = get_setting("telegram_bot_token", "")
-        chat_id = get_setting("telegram_chat_id", "")
-    except Exception as e:
-        logger.warning("Failed to load Telegram settings for risk alert: %s", e)
-        return
-
+    bot_token, chat_id = _get_telegram_creds()
     if bot_token and chat_id:
         msg = format_risk_alert_message(alert_type, severity, message, symbol)
         send_telegram(bot_token, chat_id, msg)
@@ -155,14 +169,7 @@ def notify_risk_alert(alert_type: str, severity: str, message: str,
 
 def notify_daily_summary(signals: list[dict]):
     """Send daily summary via all configured channels."""
-    try:
-        from db.models import get_setting
-        bot_token = get_setting("telegram_bot_token", "")
-        chat_id = get_setting("telegram_chat_id", "")
-    except Exception as e:
-        logger.warning("Failed to load Telegram settings for daily summary: %s", e)
-        return
-
+    bot_token, chat_id = _get_telegram_creds()
     if bot_token and chat_id:
         msg = format_daily_summary(signals)
         send_telegram(bot_token, chat_id, msg)

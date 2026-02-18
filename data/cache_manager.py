@@ -24,15 +24,19 @@ def cache_price_data(symbol: str, df: pd.DataFrame, asset_type: str = "stock"):
     """Store OHLCV data in the cache."""
     if df.empty:
         return
+    dates = [str(idx.date()) if hasattr(idx, "date") else str(idx) for idx in df.index]
+    volume = df["volume"].tolist() if "volume" in df.columns else [0] * len(df)
+    rows = list(zip(
+        [symbol] * len(df), dates,
+        df["open"].tolist(), df["high"].tolist(), df["low"].tolist(), df["close"].tolist(),
+        volume, [asset_type] * len(df),
+    ))
     with get_db() as conn:
-        for date, row in df.iterrows():
-            conn.execute("""
-                INSERT OR REPLACE INTO price_cache
-                (symbol, date, open, high, low, close, volume, asset_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (symbol, str(date.date()) if hasattr(date, 'date') else str(date),
-                  row["open"], row["high"], row["low"], row["close"],
-                  row.get("volume", 0), asset_type))
+        conn.executemany("""
+            INSERT OR REPLACE INTO price_cache
+            (symbol, date, open, high, low, close, volume, asset_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
 
 
 def get_cached_price_data(symbol: str, asset_type: str = "stock",

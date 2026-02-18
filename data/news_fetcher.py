@@ -3,9 +3,11 @@
 import requests
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from config import MARKETAUX_API_KEY, FINNHUB_API_KEY, RATE_LIMITS
 from data.rate_limiter import RateLimiter
+from data.cache_manager import get_cached_news, cache_news
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ def fetch_finnhub_news(symbol: str, days: int = 7) -> list[dict]:
                 "description": item.get("summary", ""),
                 "source": item.get("source", ""),
                 "url": item.get("url", ""),
-                "published_at": datetime.fromtimestamp(item.get("datetime", 0)).isoformat(),
+                "published_at": datetime.fromtimestamp(item.get("datetime") or 0).isoformat(),
             })
         return articles
     except Exception as e:
@@ -99,13 +101,31 @@ def fetch_finnhub_news(symbol: str, days: int = 7) -> list[dict]:
 def fetch_news(symbol: str) -> list[dict]:
     """Fetch news from all available sources, deduplicate by title.
 
+    Uses ThreadPoolExecutor to fetch MarketAux and Finnhub in parallel.
     Falls back to cached news if live fetch returns nothing.
     """
-    articles = []
-    articles.extend(fetch_marketaux_news(symbol))
     # Finnhub works with stock tickers (strip /USDT for crypto)
     ticker = symbol.split("/")[0]
-    articles.extend(fetch_finnhub_news(ticker))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        marketaux_future = executor.submit(fetch_marketaux_news, symbol)
+        finnhub_future = executor.submit(fetch_finnhub_news, ticker)
+
+        try:
+            marketaux_articles = marketaux_future.result(timeout=15)
+        except Exception as e:
+            logger.warning("MarketAux concurrent fetch failed: %s", e)
+            marketaux_articles = []
+
+        try:
+            finnhub_articles = finnhub_future.result(timeout=15)
+        except Exception as e:
+            logger.warning("Finnhub concurrent fetch failed: %s", e)
+            finnhub_articles = []
+
+    articles = []
+    articles.extend(marketaux_articles)
+    articles.extend(finnhub_articles)
 
     # Deduplicate by title
     seen = set()
@@ -119,7 +139,6 @@ def fetch_news(symbol: str) -> list[dict]:
     # Fallback to cache if live fetch returned nothing
     if not unique:
         try:
-            from data.cache_manager import get_cached_news
             cached = get_cached_news(symbol)
             if cached:
                 logger.info("Using cached news for %s (live fetch returned empty)", symbol)
@@ -130,7 +149,6 @@ def fetch_news(symbol: str) -> list[dict]:
     # Cache successful results for future fallback
     if unique:
         try:
-            from data.cache_manager import cache_news
             cache_news(symbol, unique)
         except Exception as e:
             logger.debug("Failed to write news cache for %s: %s", symbol, e)

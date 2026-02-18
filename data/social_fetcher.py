@@ -1,23 +1,39 @@
 """Reddit social data fetcher using PRAW."""
 
 import logging
+import threading
 import praw
+from concurrent.futures import ThreadPoolExecutor
 from config import REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USER_AGENT, RATE_LIMITS
 from data.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
 _reddit_limiter = RateLimiter(RATE_LIMITS["reddit_per_minute"], 60)
+_reddit_lock = threading.Lock()
+_reddit_instance = None
 
 
 def _get_reddit():
+    """Return a module-level PRAW Reddit singleton.
+
+    PRAW initialises an OAuth session on construction; creating a new instance
+    per call wastes a network round-trip every time posts or comments are
+    fetched.  Double-checked locking keeps this thread-safe.
+    """
+    global _reddit_instance
+    if _reddit_instance is not None:
+        return _reddit_instance
     if not REDDIT_CLIENT_ID or not REDDIT_CLIENT_SECRET:
         return None
-    return praw.Reddit(
-        client_id=REDDIT_CLIENT_ID,
-        client_secret=REDDIT_CLIENT_SECRET,
-        user_agent=REDDIT_USER_AGENT,
-    )
+    with _reddit_lock:
+        if _reddit_instance is None:
+            _reddit_instance = praw.Reddit(
+                client_id=REDDIT_CLIENT_ID,
+                client_secret=REDDIT_CLIENT_SECRET,
+                user_agent=REDDIT_USER_AGENT,
+            )
+    return _reddit_instance
 
 
 # Mapping of assets to relevant subreddits
@@ -85,10 +101,14 @@ def fetch_reddit_comments(symbol: str, asset_type: str = "stock",
     comments = []
 
     for sub_name in subreddits:
+        if len(comments) >= limit:
+            break
         _reddit_limiter.acquire()
         try:
             subreddit = reddit.subreddit(sub_name)
             for post in subreddit.search(ticker, sort="new", time_filter="week", limit=5):
+                if len(comments) >= limit:
+                    break
                 post.comments.replace_more(limit=0)
                 for comment in post.comments[:10]:
                     if hasattr(comment, "body") and len(comment.body) > 20:

@@ -7,8 +7,15 @@ from db.models import add_risk_alert, get_holdings
 
 
 def check_position_limits(symbol: str, proposed_value: float,
-                          portfolio_value: float, asset_type: str = "stock") -> dict:
+                          portfolio_value: float, asset_type: str = "stock",
+                          current_crypto_value: float | None = None) -> dict:
     """Check if a proposed position violates risk limits.
+
+    Args:
+        current_crypto_value: Sum of current market values of all existing crypto
+            holdings.  When provided, used instead of cost-basis from the DB so that
+            the crypto allocation check reflects real exposure rather than historical
+            cost (which under-reports exposure for appreciated positions).
 
     Returns dict with 'allowed' (bool), 'violations' (list), 'warnings' (list).
     """
@@ -24,9 +31,14 @@ def check_position_limits(symbol: str, proposed_value: float,
 
     # Crypto allocation limit
     if asset_type == "crypto":
-        holdings = get_holdings()
-        crypto_value = sum(h["quantity"] * h["avg_cost"] for h in holdings
-                          if h.get("asset_type") == "crypto")
+        if current_crypto_value is not None:
+            crypto_value = current_crypto_value
+        else:
+            # Fallback: use cost basis from DB (conservative for losing positions,
+            # but may understate exposure for appreciated holdings)
+            holdings = get_holdings()
+            crypto_value = sum(h["quantity"] * h["avg_cost"] for h in holdings
+                               if h.get("asset_type") == "crypto")
         new_crypto_pct = (crypto_value + proposed_value) / portfolio_value
         if new_crypto_pct > RISK["max_crypto_allocation"]:
             violations.append(
