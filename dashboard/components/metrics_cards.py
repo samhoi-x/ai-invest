@@ -16,10 +16,14 @@ def price_card(symbol: str, price: float, change: float, change_pct: float):
 
 def signal_card(symbol: str, direction: str, confidence: float,
                 strength: float, tech_score: float = 0, sent_score: float = 0,
-                ml_score: float = 0):
-    """Display a large signal card with factor breakdown."""
+                ml_score: float = 0, summary: str = ""):
+    """Display a large signal card with factor breakdown and optional summary."""
     color_map = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}
     icon = color_map.get(direction, "⚪")
+
+    summary_html = ""
+    if summary:
+        summary_html = f'<p style="margin:8px 0 0 0; font-size:0.95em; opacity:0.9;">{summary}</p>'
 
     st.markdown(f"""
     <div style="padding:16px; border-radius:12px; border:2px solid {'#26a69a' if direction=='BUY' else '#ef5350' if direction=='SELL' else '#FFC107'};
@@ -28,6 +32,7 @@ def signal_card(symbol: str, direction: str, confidence: float,
         <p style="margin:4px 0;">Confidence: <b>{confidence:.0%}</b> | Strength: <b>{strength:+.2f}</b></p>
         <hr style="margin:8px 0;">
         <small>Technical: {tech_score:+.2f} | Sentiment: {sent_score:+.2f} | ML: {ml_score:+.2f}</small>
+        {summary_html}
     </div>
     """, unsafe_allow_html=True)
 

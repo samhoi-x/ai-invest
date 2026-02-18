@@ -6,21 +6,25 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from i18n import t
+from i18n import t, get_lang
 
 from data.stock_fetcher import fetch_stock_data
 from data.crypto_fetcher import fetch_crypto_data
 from data.news_fetcher import fetch_news
 from data.social_fetcher import fetch_reddit_posts
 from data.cache_manager import cache_price_data, get_cached_price_data
-from analysis.technical import compute_technical_signal, compute_all_indicators
+from analysis.technical import compute_technical_signal, compute_all_indicators, atr as calc_atr
 from analysis.sentiment import compute_sentiment_signal
 from analysis.ml_models import compute_ml_signal
 from strategy.signal_combiner import combine_signals
+from strategy.signal_explainer import explain_signal
+from strategy.risk_manager import generate_action_plan
 from dashboard.components.metrics_cards import signal_card
-from dashboard.components.signal_display import factor_breakdown, signal_table
+from dashboard.components.signal_display import (
+    factor_breakdown, signal_table, signal_explanation_panel, action_plan_panel,
+)
 from dashboard.components.charts import candlestick_chart, line_chart
-from db.models import save_signal, get_latest_signals, get_signal_history
+from db.models import save_signal, get_latest_signals, get_signal_history, get_holdings, get_setting
 from data.notifier import notify_signal
 from config import DEFAULT_STOCKS, DEFAULT_CRYPTO
 
@@ -90,6 +94,30 @@ if generate:
 
         # 5. Combine signals
         combined = combine_signals(tech_signal, sent_signal, ml_signal)
+        combined["symbol"] = symbol
+
+        # 6. Generate beginner-friendly explanation
+        explanations = explain_signal(combined, tech_signal, lang=get_lang())
+
+        # 7. Generate action plan
+        current_price = df["close"].iloc[-1]
+        atr_series = calc_atr(df)
+        atr_val = atr_series.iloc[-1] if not atr_series.empty else None
+        if atr_val is not None and pd.isna(atr_val):
+            atr_val = None
+
+        portfolio_value = get_setting("portfolio_value_default", 100000)
+        if portfolio_value is None:
+            portfolio_value = 100000
+        cash = get_setting("available_cash", portfolio_value)
+        if cash is None:
+            cash = portfolio_value
+
+        action_plan = generate_action_plan(
+            symbol, combined, current_price, atr_val,
+            portfolio_value, cash,
+            asset_type="crypto" if asset_type == t("crypto") else "stock",
+        )
 
         # Save to DB
         save_signal(
@@ -109,16 +137,28 @@ if generate:
 
     # ── Display Results ───────────────────────────────────────────────
     st.divider()
+
+    # Signal card (with plain-language summary)
     signal_card(symbol, combined["direction"], combined["confidence"],
                 combined["strength"], combined["technical_score"],
-                combined["sentiment_score"], combined["ml_score"])
+                combined["sentiment_score"], combined["ml_score"],
+                summary=explanations["summary"])
 
+    # Action plan
+    st.divider()
+    action_plan_panel(action_plan, lang=get_lang())
+
+    # Factor breakdown (with tooltips)
     st.divider()
     st.subheader(t("factor_breakdown"))
     factor_breakdown(combined["technical_score"], combined["sentiment_score"],
                      combined["ml_score"])
 
-    # Technical details
+    # Beginner-friendly explanation (expandable)
+    with st.expander(f"💡 {t('why_this_signal')}"):
+        signal_explanation_panel(explanations)
+
+    # Technical details (for advanced users)
     with st.expander(f"📊 {t('tech_details')}"):
         st.json(tech_signal)
 
