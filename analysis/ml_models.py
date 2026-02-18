@@ -12,6 +12,11 @@ from analysis.feature_engine import prepare_xgboost_data, prepare_lstm_data
 
 logger = logging.getLogger(__name__)
 
+import threading as _threading
+
+_predictor_cache: dict[tuple, object] = {}   # (ClassType, symbol) → predictor instance
+_cache_lock = _threading.Lock()
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  XGBoost Direction Classifier
@@ -281,7 +286,7 @@ class LSTMPredictor:
             pred = self.model(X_last).cpu().numpy().flatten()[0]
 
         signal_score = float(np.clip(pred, -1, 1))
-        confidence = min(1.0, abs(signal_score) + 0.3)
+        confidence = abs(signal_score)  # Tanh output: 0 = no conviction, ±1 = full conviction
 
         return {
             "signal_score": round(signal_score, 4),
@@ -443,13 +448,27 @@ def _model_is_stale(trained_at: str | None) -> bool:
         return True
 
 
+def _get_predictor(cls, symbol: str):
+    """Return a cached predictor instance, creating one if needed."""
+    key = (cls, symbol)
+    inst = _predictor_cache.get(key)
+    if inst is None:
+        with _cache_lock:
+            if key not in _predictor_cache:
+                _predictor_cache[key] = cls()
+            inst = _predictor_cache[key]
+    return inst
+
+
 def _load_train_predict(predictor, symbol, df, train_if_needed):
     """Helper: load, retrain if stale, predict."""
     default = {"signal_score": 0, "confidence": 0}
     if df.empty:
         return default
-    loaded = predictor.load(symbol)
-    if (not loaded or _model_is_stale(predictor.trained_at)) and train_if_needed:
+    # Only hit disk if the model has not been loaded into this cached instance yet
+    if predictor.model is None:
+        predictor.load(symbol)
+    if (predictor.model is None or _model_is_stale(predictor.trained_at)) and train_if_needed:
         train_result = predictor.train(df)
         if "error" not in train_result:
             predictor.save(symbol)
@@ -466,9 +485,9 @@ def compute_ml_signal(df: pd.DataFrame, symbol: str,
 
     Returns dict with 'score' (-1 to +1), 'confidence', and model details.
     """
-    xgb_result = _load_train_predict(XGBoostPredictor(), symbol, df, train_if_needed)
-    lgb_result = _load_train_predict(LightGBMPredictor(), symbol, df, train_if_needed)
-    lstm_result = _load_train_predict(LSTMPredictor(), symbol, df, train_if_needed)
+    xgb_result  = _load_train_predict(_get_predictor(XGBoostPredictor,  symbol), symbol, df, train_if_needed)
+    lgb_result  = _load_train_predict(_get_predictor(LightGBMPredictor, symbol), symbol, df, train_if_needed)
+    lstm_result = _load_train_predict(_get_predictor(LSTMPredictor,     symbol), symbol, df, train_if_needed)
 
     # Weighted combination
     xgb_w = ML_PARAMS["xgboost_weight"]
