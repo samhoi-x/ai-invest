@@ -21,6 +21,14 @@ with st.sidebar:
     language_selector()
     st.divider()
 
+# ── Daily Briefing in sidebar ─────────────────────────────────────────
+try:
+    from dashboard.components.daily_briefing import render_daily_briefing
+    _lang = st.session_state.get("lang", "zh")
+    render_daily_briefing(lang=_lang)
+except Exception:
+    pass  # never crash the app due to briefing
+
 # ── Page Navigation ───────────────────────────────────────────────────
 pages = {
     t("market_overview"): [
@@ -35,8 +43,14 @@ pages = {
         st.Page("dashboard/pages/5_backtest.py", title=t("backtest"), icon="\U0001f4c8"),
         st.Page("dashboard/pages/6_performance.py", title=t("performance"), icon="\U0001f4ca"),
     ],
+    t("paper_trading"): [
+        st.Page("dashboard/pages/9_paper_trading.py", title=t("paper_trading"), icon="\U0001f9ea"),
+    ],
     t("settings"): [
         st.Page("dashboard/pages/7_settings.py", title=t("settings"), icon="\u2699\ufe0f"),
+    ],
+    t("help_guide"): [
+        st.Page("dashboard/pages/8_help.py", title=t("help_guide"), icon="\U0001f4d6"),
     ],
 }
 

@@ -120,6 +120,11 @@ def compute_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df["volume"].sum() > 0:
         result["VWAP"] = vwap(df)
 
+    # Relative Volume: today vs 20-day average (anomaly detection)
+    if "volume" in df.columns and df["volume"].sum() > 0:
+        vol_avg_20 = df["volume"].rolling(20).mean()
+        result["REL_VOL"] = df["volume"] / vol_avg_20.replace(0, np.nan)
+
     return result
 
 
@@ -238,6 +243,41 @@ def compute_technical_signal(df: pd.DataFrame,
     else:
         confidence = 0.0
 
+    # ── Relative Volume confirmation ──────────────────────────────────────
+    rel_vol_raw = latest.get("REL_VOL")
+    rel_vol = float(rel_vol_raw) if (rel_vol_raw is not None and not pd.isna(rel_vol_raw)) else 1.0
+
+    if rel_vol > 2.0:
+        # High volume confirms whichever direction the composite is leaning
+        if abs(composite) > 0.05:
+            confidence = min(1.0, confidence + 0.06)
+            # Small composite nudge (5% weight given to volume-confirmed direction)
+            vol_confirm = 0.5 if composite > 0 else -0.5
+            composite = float(np.clip(0.95 * composite + 0.05 * vol_confirm, -1.0, 1.0))
+        scores["volume_confirmation"] = 0.5 if composite > 0 else -0.5
+    elif rel_vol < 0.3:
+        # Very thin volume — less conviction
+        confidence = max(0.0, confidence - 0.04)
+        scores["volume_confirmation"] = 0.0
+    else:
+        scores["volume_confirmation"] = 0.0
+
+    # ── Chart pattern recognition ─────────────────────────────────────────
+    pattern_result: dict = {"score": 0.0, "confidence": 0.0, "patterns": [], "n_patterns": 0}
+    try:
+        from analysis.pattern_recognition import detect_patterns
+        pattern_result = detect_patterns(df)
+        if pattern_result["n_patterns"] > 0:
+            p_score = pattern_result["score"]
+            scores["pattern"] = p_score
+            # 15% weight to pattern score blend into composite
+            composite = float(np.clip(0.85 * composite + 0.15 * p_score, -1.0, 1.0))
+            # Pattern confidence boosts overall confidence when aligned
+            if (p_score > 0.05 and composite > 0) or (p_score < -0.05 and composite < 0):
+                confidence = min(1.0, confidence + 0.05 * pattern_result["n_patterns"])
+    except Exception:
+        pass
+
     return {
         "score": round(max(-1.0, min(1.0, composite)), 4),
         "confidence": round(confidence, 4),
@@ -250,5 +290,8 @@ def compute_technical_signal(df: pd.DataFrame,
             "SMA_20": round(latest.get("SMA_20", 0), 2),
             "SMA_50": round(latest.get("SMA_50", 0), 2),
             "ATR": round(latest.get("ATR", 0), 4),
+            "REL_VOL": round(rel_vol, 2),
         },
+        "patterns": pattern_result["patterns"],
+        "pattern_score": round(pattern_result["score"], 4),
     }

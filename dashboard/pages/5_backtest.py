@@ -37,6 +37,15 @@ with st.form("backtest_config"):
         end_date = st.date_input("End Date", value=datetime.now())
         commission = st.number_input("Commission (%)", value=0.1, step=0.01, min_value=0.0) / 100
 
+    backtest_mode = st.radio(
+        "Signal Mode",
+        options=["Technical Only", "AI Multi-Factor (Tech + ML)"],
+        horizontal=True,
+        help=(
+            "Technical Only: fast, uses OHLCV indicators (RSI, MACD, BB, SMA, patterns). "
+            "AI Multi-Factor: slower, adds ML model predictions on top of technical signals."
+        ),
+    )
     backtest_name = st.text_input("Backtest Name", f"Backtest {datetime.now().strftime('%Y%m%d_%H%M')}")
     run_bt = st.form_submit_button(f"🚀 {t('run_backtest')}", type="primary")
 
@@ -73,13 +82,17 @@ if run_bt:
             st.error("No data available for the selected symbols and date range.")
             st.stop()
 
-    with st.spinner("Running backtest..."):
+    mode_key = "ai" if "AI" in backtest_mode else "technical"
+    if mode_key == "ai":
+        st.info("AI mode: loading/training ML models. This may take a moment on first run...")
+
+    with st.spinner(f"Running backtest ({backtest_mode})..."):
         engine = BacktestEngine(
             initial_capital=initial_capital,
             position_size_pct=position_size,
             commission=commission,
         )
-        results = engine.run(price_data)
+        results = engine.run(price_data, mode=mode_key)
 
     if "error" in results:
         st.error(results["error"])
@@ -161,7 +174,8 @@ if run_bt:
     save_backtest(
         name=backtest_name,
         config={"symbols": symbols, "start": str(start_date), "end": str(end_date),
-                "capital": initial_capital, "position_size": position_size},
+                "capital": initial_capital, "position_size": position_size,
+                "mode": mode_key},
         total_return=results["total_return"],
         annual_return=results["annual_return"],
         sharpe_ratio=results["sharpe_ratio"],

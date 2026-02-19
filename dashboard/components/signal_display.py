@@ -115,6 +115,15 @@ def action_plan_panel(action_plan: dict, lang: str = "en"):
     risk_pct = action_plan.get("risk_pct", 0)
     target = action_plan.get("target_price")
     rr = action_plan.get("risk_reward", "N/A")
+    kelly_frac = action_plan.get("kelly_fraction")
+
+    kelly_html = ""
+    if kelly_frac is not None:
+        kelly_html = (
+            f"<tr><td style='padding:4px 12px;color:#90A4AE;'>Kelly Fraction</td>"
+            f"<td style='padding:4px 12px;'><b>{kelly_frac:.1%}</b> "
+            f"<span style='color:#90A4AE;font-size:0.85em;'>(half-Kelly)</span></td></tr>"
+        )
 
     target_html = ""
     if target is not None:
@@ -140,6 +149,7 @@ def action_plan_panel(action_plan: dict, lang: str = "en"):
             <td style="padding:4px 12px;"><b>${pos_value:,.2f}</b> ({pos_pct:.1%} {t('of_portfolio')})</td></tr>
         <tr><td style="padding:4px 12px;color:#90A4AE;">{t('dollar_risk')}</td>
             <td style="padding:4px 12px;"><b>${total_risk:,.2f}</b> ({risk_pct:.2%} {t('of_portfolio')})</td></tr>
+        {kelly_html}
         {target_html}
         </table>
     </div>

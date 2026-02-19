@@ -95,6 +95,8 @@ def init_db():
             technical_score REAL,
             sentiment_score REAL,
             ml_score REAL,
+            macro_score  REAL,
+            macro_regime TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             -- Outcome tracking (filled later by accuracy tracker)
             outcome_return_5d REAL,
@@ -171,8 +173,51 @@ def init_db():
         -- compute_adaptive_weights: WHERE outcome_correct IS NOT NULL AND direction != 'HOLD'
         CREATE INDEX IF NOT EXISTS idx_signals_outcome_dir
             ON signals(outcome_correct, direction);
+
+        -- Paper trading: virtual positions
+        CREATE TABLE IF NOT EXISTS paper_positions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol      TEXT    NOT NULL,
+            entry_date  TEXT    NOT NULL,
+            entry_price REAL    NOT NULL,
+            quantity    REAL    NOT NULL,
+            stop_loss   REAL,
+            trailing_stop REAL,
+            highest_price REAL,
+            status      TEXT    NOT NULL DEFAULT 'open',
+            opened_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            closed_at   TEXT,
+            close_price REAL,
+            realized_pnl REAL   DEFAULT 0
+        );
+
+        -- Paper trading: virtual trade log
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol      TEXT    NOT NULL,
+            action      TEXT    NOT NULL,
+            price       REAL    NOT NULL,
+            quantity    REAL    NOT NULL,
+            pnl         REAL    DEFAULT 0,
+            reason      TEXT,
+            executed_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_paper_pos_symbol ON paper_positions(symbol, status);
+        CREATE INDEX IF NOT EXISTS idx_paper_trades_sym ON paper_trades(symbol);
         """)
+
+
+def _migrate_db():
+    """Apply schema migrations for columns added after initial release."""
+    with get_db() as conn:
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(signals)").fetchall()}
+        if "macro_score" not in existing_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN macro_score REAL")
+        if "macro_regime" not in existing_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN macro_regime TEXT")
 
 
 # Initialize on import
 init_db()
+_migrate_db()

@@ -279,12 +279,15 @@ def compute_adaptive_weights(min_samples: int = 30) -> dict:
         "technical": tech_corr / total_corr,
         "sentiment": sent_corr / total_corr,
         "ml":        ml_corr   / total_corr,
+        "macro":     0.0,   # not data-driven; macro is global, not per-symbol
     }
 
     # Bayesian shrinkage: 50 % data-driven, 50 % config prior
     blended = {
-        k: 0.5 * data_w[k] + 0.5 * SIGNAL_WEIGHTS[k]
-        for k in SIGNAL_WEIGHTS
+        "technical": 0.5 * data_w["technical"] + 0.5 * SIGNAL_WEIGHTS["technical"],
+        "sentiment": 0.5 * data_w["sentiment"] + 0.5 * SIGNAL_WEIGHTS["sentiment"],
+        "ml":        0.5 * data_w["ml"]        + 0.5 * SIGNAL_WEIGHTS["ml"],
+        "macro":     SIGNAL_WEIGHTS["macro"],   # always held at config prior
     }
 
     # Re-normalise to guarantee weights sum to exactly 1.0
@@ -292,10 +295,10 @@ def compute_adaptive_weights(min_samples: int = 30) -> dict:
     result = {k: round(v / total, 4) for k, v in blended.items()}
 
     logger.info(
-        "Adaptive weights (n=%d): tech=%.3f sent=%.3f ml=%.3f "
+        "Adaptive weights (n=%d): tech=%.3f sent=%.3f ml=%.3f macro=%.3f "
         "(corr: tech=%.3f sent=%.3f ml=%.3f)",
         len(rows),
-        result["technical"], result["sentiment"], result["ml"],
+        result["technical"], result["sentiment"], result["ml"], result["macro"],
         tech_corr, sent_corr, ml_corr,
     )
     return result

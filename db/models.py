@@ -74,14 +74,17 @@ def get_transactions(limit=100):
 # ── Signals ───────────────────────────────────────────────────────────
 
 def save_signal(symbol, signal_type, direction, strength, confidence,
-                technical_score=None, sentiment_score=None, ml_score=None):
+                technical_score=None, sentiment_score=None, ml_score=None,
+                macro_score=None, macro_regime=None):
     with get_db() as conn:
         conn.execute("""
             INSERT INTO signals (symbol, signal_type, direction, strength,
-                confidence, technical_score, sentiment_score, ml_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                confidence, technical_score, sentiment_score, ml_score,
+                macro_score, macro_regime)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (symbol, signal_type, direction, strength, confidence,
-              technical_score, sentiment_score, ml_score))
+              technical_score, sentiment_score, ml_score,
+              macro_score, macro_regime))
 
 
 def get_latest_signals(limit=50):
@@ -130,6 +133,83 @@ def save_backtest(name, config, total_return, annual_return, sharpe_ratio,
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (name, json.dumps(config), total_return, annual_return,
               sharpe_ratio, max_drawdown, win_rate, total_trades, json.dumps(equity_curve)))
+
+
+# ── Paper Trading ─────────────────────────────────────────────────────
+
+def get_paper_positions(status: str = "open") -> list[dict]:
+    with get_db() as conn:
+        if status == "all":
+            rows = conn.execute(
+                "SELECT * FROM paper_positions ORDER BY opened_at DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM paper_positions WHERE status=? ORDER BY opened_at DESC",
+                (status,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def open_paper_position(symbol: str, entry_price: float, quantity: float,
+                        stop_loss: float | None = None) -> int:
+    with get_db() as conn:
+        cur = conn.execute("""
+            INSERT INTO paper_positions
+                (symbol, entry_date, entry_price, quantity, stop_loss,
+                 trailing_stop, highest_price, status)
+            VALUES (?, date('now'), ?, ?, ?, ?, ?, 'open')
+        """, (symbol, entry_price, quantity, stop_loss,
+              entry_price * 0.95,   # default trailing stop 5%
+              entry_price))
+        return cur.lastrowid
+
+
+def update_paper_position(position_id: int, **kwargs) -> None:
+    allowed = {"stop_loss", "trailing_stop", "highest_price"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return
+    cols = ", ".join(f"{k}=?" for k in updates)
+    with get_db() as conn:
+        conn.execute(
+            f"UPDATE paper_positions SET {cols} WHERE id=?",
+            (*updates.values(), position_id),
+        )
+
+
+def close_paper_position(position_id: int, close_price: float,
+                         realized_pnl: float) -> None:
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE paper_positions
+            SET status='closed', closed_at=datetime('now'),
+                close_price=?, realized_pnl=?
+            WHERE id=?
+        """, (close_price, realized_pnl, position_id))
+
+
+def add_paper_trade(symbol: str, action: str, price: float,
+                    quantity: float, pnl: float = 0, reason: str = "") -> None:
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO paper_trades (symbol, action, price, quantity, pnl, reason)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (symbol, action, price, quantity, pnl, reason))
+
+
+def get_paper_trades(limit: int = 100) -> list[dict]:
+    with get_db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM paper_trades ORDER BY executed_at DESC LIMIT ?", (limit,)
+        ).fetchall()]
+
+
+def reset_paper_portfolio() -> None:
+    """Delete all paper positions and trades (full reset)."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM paper_positions")
+        conn.execute("DELETE FROM paper_trades")
 
 
 def get_backtest_results(limit=20):

@@ -94,6 +94,8 @@ TRANSLATIONS = {
         "tip_sentiment": "Sentiment Analysis scans news and social media to gauge market mood — optimistic (bullish) or pessimistic (bearish).",
         "tip_ml": "Machine Learning models (XGBoost, LightGBM, LSTM) use historical patterns to predict 5-day price direction.",
         "tip_technical": "Technical Analysis examines price patterns and indicators to predict future movements based on historical data.",
+        "help_guide": "Help & Beginner's Guide",
+        "paper_trading": "Paper Trading",
     },
     "zh": {
         "app_title": "AI \u667a\u80fd\u6295\u8cc7",
@@ -186,6 +188,8 @@ TRANSLATIONS = {
         "tip_sentiment": "情緒分析掃描新聞和社群媒體，判斷市場情緒——樂觀（看漲）或悲觀（看跌）。",
         "tip_ml": "機器學習模型（XGBoost、LightGBM、LSTM）利用歷史模式預測 5 日價格方向。",
         "tip_technical": "技術分析透過檢視價格模式和指標，根據歷史數據預測未來走勢。",
+        "help_guide": "使用說明與入門指引",
+        "paper_trading": "模擬交易",
     },
 }
 

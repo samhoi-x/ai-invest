@@ -222,6 +222,97 @@ def compute_portfolio_risk(holdings: list[dict], prices: dict[str, float],
     return {"var_95": 0, "sharpe": 0, "portfolio_volatility": 0}
 
 
+def compute_kelly_fraction(
+    signal: dict,
+    symbol: str | None = None,
+    max_fraction: float | None = None,
+) -> float:
+    """Estimate a half-Kelly position fraction from signal quality metrics.
+
+    The Kelly Criterion maximises long-run portfolio growth by sizing
+    positions proportional to edge and inversely proportional to variance.
+
+    Full Kelly:  f* = (p·b − q) / b
+        p  = estimated win probability
+        q  = 1 − p
+        b  = estimated reward-to-risk ratio
+
+    We use *half-Kelly* (f*/2) for conservative real-world application.
+
+    Win probability proxy:
+        base 50% + up to 25% boost from signal confidence
+        → range [0.50, 0.75]
+
+    Reward-to-risk proxy:
+        base 1.5:1 + signal strength boost
+        → range [1.50, 2.50]
+
+    The result is capped at max_fraction (default: RISK["max_single_position"])
+    to prevent any single Kelly-oversized position.
+
+    Args:
+        signal:       Combined signal dict (needs 'confidence' and 'strength').
+        max_fraction: Hard cap on the returned fraction (0–1).
+
+    Returns:
+        float: Position fraction of portfolio (0 to max_fraction).
+    """
+    if max_fraction is None:
+        max_fraction = RISK["max_single_position"]
+
+    direction  = signal.get("direction", "BUY")
+    confidence = float(signal.get("confidence", 0.50))
+    strength   = abs(float(signal.get("strength",   0.00)))
+
+    # ── Attempt 1: real historical win rates from DB ───────────────────────
+    # Requires ≥ 10 evaluated outcomes for the symbol/direction pair.
+    if symbol and direction in ("BUY", "SELL"):
+        try:
+            from db.database import get_db
+            with get_db() as conn:
+                rows = conn.execute("""
+                    SELECT outcome_correct, outcome_return_5d
+                    FROM signals
+                    WHERE symbol = ?
+                      AND direction = ?
+                      AND outcome_correct IS NOT NULL
+                      AND created_at >= datetime('now', '-180 days')
+                    ORDER BY created_at DESC
+                    LIMIT 50
+                """, (symbol, direction)).fetchall()
+
+            if len(rows) >= 10:
+                wins   = [r for r in rows if r[0] == 1]
+                losses = [r for r in rows if r[0] == 0]
+                p_win_real  = len(wins) / len(rows)
+                avg_win  = float(np.mean([abs(r[1]) for r in wins]))   if wins   else 0.02
+                avg_loss = float(np.mean([abs(r[1]) for r in losses])) if losses else 0.02
+                b_real = float(np.clip(avg_win / avg_loss if avg_loss > 0 else 1.5, 0.5, 5.0))
+                p_loss_real = 1.0 - p_win_real
+                kelly_real  = (p_win_real * b_real - p_loss_real) / b_real
+                kelly_real  = max(kelly_real, 0.0)
+                return float(np.clip(kelly_real * 0.5, 0.0, max_fraction))
+        except Exception:
+            pass  # fall through to confidence-based estimate
+
+    # ── Attempt 2: confidence-based proxy (fallback) ───────────────────────
+    # Estimate win probability: 50% base + confidence contribution
+    p_win  = float(np.clip(0.50 + confidence * 0.25, 0.50, 0.75))
+    p_loss = 1.0 - p_win
+
+    # Estimate reward-to-risk ratio from signal strength
+    b = float(np.clip(1.50 + strength * 1.00, 1.50, 2.50))
+
+    # Full Kelly
+    kelly = (p_win * b - p_loss) / b
+    kelly = max(kelly, 0.0)  # never negative
+
+    # Half-Kelly (conservative)
+    half_kelly = kelly * 0.5
+
+    return float(np.clip(half_kelly, 0.0, max_fraction))
+
+
 def generate_action_plan(
     symbol: str,
     signal: dict,
@@ -294,16 +385,18 @@ def generate_action_plan(
     stop_distance = abs(current_price - stop_price)
     stop_pct = stop_distance / current_price if current_price > 0 else STOP_LOSS["percentage"]
 
-    # 3. Position sizing — risk-based
+    # 3. Position sizing — Kelly Criterion + risk-based (take the more conservative)
+    kelly_fraction = compute_kelly_fraction(signal, symbol=symbol)
+    kelly_position = kelly_fraction * portfolio_value
+
     if stop_pct > 0:
         risk_budget = RISK["max_trade_risk"] * portfolio_value  # e.g. 1% of portfolio
-        position_value = risk_budget / stop_pct
+        risk_position = risk_budget / stop_pct
     else:
-        position_value = RISK["max_trade_risk"] * portfolio_value
+        risk_position = RISK["max_single_position"] * portfolio_value
 
-    # Cap by max single position and available cash
-    max_position = RISK["max_single_position"] * portfolio_value
-    position_value = min(position_value, max_position, cash * 0.9)
+    # Use the smaller of Kelly-based and risk-based sizing, then cap by cash
+    position_value = min(kelly_position, risk_position, cash * 0.9)
     position_value = max(position_value, 0)
 
     # 4. Check position limits
@@ -349,6 +442,7 @@ def generate_action_plan(
         "risk_pct": round(risk_pct, 4),
         "target_price": target_price,
         "risk_reward": risk_reward,
+        "kelly_fraction": round(kelly_fraction, 4),
         "warnings": warnings,
         "blocked": blocked,
         "blocked_reason": blocked_reason,

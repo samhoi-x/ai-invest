@@ -85,6 +85,58 @@ def prepare_xgboost_data(df: pd.DataFrame, forward_days: int = None):
     return X, y, feature_cols
 
 
+def prepare_transformer_data(df: pd.DataFrame,
+                             window: int = None,
+                             horizons: tuple = None):
+    """Prepare multi-horizon sequential data for the Transformer model.
+
+    Predicts multiple forward return horizons simultaneously (1d, 5d, 10d).
+
+    Returns
+    -------
+    X : np.ndarray  shape (samples, window, features)  — z-score normalised
+    y : np.ndarray  shape (samples, len(horizons))     — clipped returns
+    feature_names : list[str]
+    """
+    if window is None:
+        window = ML_PARAMS["lstm_window"]
+    if horizons is None:
+        horizons = tuple(ML_PARAMS.get("predict_horizons", [1, 5, 10]))
+
+    feat = build_features(df)
+
+    target_cols = []
+    for h in horizons:
+        col = f"fwd_{h}d"
+        feat[col] = feat["close"].shift(-h) / feat["close"] - 1
+        target_cols.append(col)
+
+    exclude = {"open", "high", "low", "close", "volume"} | set(target_cols)
+    feature_cols = [c for c in feat.columns
+                    if c not in exclude
+                    and feat[c].dtype in ("float64", "float32", "int64")]
+
+    feat = feat.dropna(subset=feature_cols + target_cols)
+    if len(feat) < window + 20:
+        return np.array([]), np.array([]), feature_cols
+
+    X_raw = feat[feature_cols].values
+    y_raw = np.clip(
+        np.column_stack([feat[c].values for c in target_cols]) * 10,
+        -1, 1
+    )  # scale & clip same as LSTM
+
+    X_windows, y_windows = [], []
+    for i in range(window, len(X_raw)):
+        wd = X_raw[i - window: i]
+        mean = wd.mean(axis=0)
+        std  = wd.std(axis=0) + 1e-8
+        X_windows.append((wd - mean) / std)
+        y_windows.append(y_raw[i])
+
+    return np.array(X_windows), np.array(y_windows), feature_cols
+
+
 def prepare_lstm_data(df: pd.DataFrame, window: int = None):
     """Prepare sequential data for LSTM.
 

@@ -28,9 +28,10 @@ DEFAULT_CRYPTO = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "ADA/USDT"]
 
 # ── Signal Weights (Conservative / 穩健型) ─────────────────────────────
 SIGNAL_WEIGHTS = {
-    "technical": 0.35,
-    "sentiment": 0.25,
-    "ml": 0.40,
+    "technical": 0.30,
+    "sentiment": 0.20,
+    "ml":        0.35,
+    "macro":     0.15,
 }
 
 # Signal thresholds (conservative bias)
@@ -75,13 +76,17 @@ TECH_PARAMS = {
 
 # ── ML Model Parameters ──────────────────────────────────────────────
 ML_PARAMS = {
-    "xgboost_weight": 0.35,
-    "lightgbm_weight": 0.30,
-    "lstm_weight": 0.35,
-    "forward_days": 5,                 # Predict 5-day forward return
+    "xgboost_weight":     0.25,
+    "lightgbm_weight":    0.20,
+    "lstm_weight":        0.25,
+    "transformer_weight": 0.30,        # New: Transformer multi-horizon model
+    "forward_days": 5,                 # Default prediction horizon (days)
+    "predict_horizons": [1, 5, 10],    # Multi-horizon targets for Transformer
+    "horizon_weights": [0.20, 0.50, 0.30],  # 1d/5d/10d blend weights
     "lstm_window": 60,                 # 60-day sliding window
     "train_window_years": 2,           # Rolling 2-year training
     "retrain_interval_days": 60,       # Retrain every 60 days
+    "conformal_alpha": 0.20,           # 80% prediction interval coverage
 }
 
 # ── Rate Limits ──────────────────────────────────────────────────────
@@ -98,6 +103,19 @@ CACHE_TTL = {
     "news_minutes": 30,                # News cache: 30 min
     "sentiment_minutes": 60,           # Sentiment cache: 1 hour
     "ml_prediction_minutes": 120,      # ML predictions cache: 2 hours
+}
+
+# ── Macro Parameters ──────────────────────────────────────────────────
+MACRO_PARAMS = {
+    "vix_ticker":      "^VIX",
+    "tnx_ticker":      "^TNX",
+    "irx_ticker":      "^IRX",
+    "dxy_ticker":      "DX-Y.NYB",
+    "fetch_period":    "3mo",
+    "cache_ttl_hours": 4,
+    "vix_weight":      0.50,
+    "yield_weight":    0.30,
+    "dxy_weight":      0.20,
 }
 
 # ── UI Settings ───────────────────────────────────────────────────────

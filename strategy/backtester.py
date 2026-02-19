@@ -11,6 +11,28 @@ from config import (BUY_THRESHOLD, SELL_THRESHOLD, BUY_CONFIDENCE_MIN,
 logger = logging.getLogger(__name__)
 
 
+def make_ai_signal_func(symbol: str):
+    """Return a signal function that combines technical + ML signals.
+
+    Used for AI-mode backtesting.  The ML model is loaded from disk
+    (trained before the backtest period starts) to avoid look-ahead bias.
+    """
+    from analysis.ml_models import compute_ml_signal
+    from strategy.signal_combiner import combine_signals
+
+    def _signal(df: pd.DataFrame) -> dict:
+        tech = compute_technical_signal(df)
+        try:
+            ml = compute_ml_signal(df, symbol, train_if_needed=True)
+        except Exception:
+            ml = {"score": 0.0, "confidence": 0.3}
+        # Neutral placeholders for signals that require live APIs
+        neutral = {"score": 0.0, "confidence": 0.3}
+        return combine_signals(tech, neutral, ml)
+
+    return _signal
+
+
 class BacktestEngine:
     """Event-driven backtester for signal-based strategies."""
 
@@ -22,7 +44,7 @@ class BacktestEngine:
         self.commission = commission  # 0.1%
 
     def run(self, price_data: dict[str, pd.DataFrame],
-            signal_func=None) -> dict:
+            signal_func=None, mode: str = "technical") -> dict:
         """Run backtest across multiple assets.
 
         Args:
@@ -33,8 +55,15 @@ class BacktestEngine:
         Returns:
             dict with performance metrics and equity curve.
         """
-        if signal_func is None:
-            signal_func = compute_technical_signal
+        # Build per-symbol signal functions for AI mode
+        if mode == "ai":
+            symbol_signal_funcs = {
+                sym: make_ai_signal_func(sym) for sym in price_data
+            }
+        else:
+            # Technical-only mode: same function for all symbols
+            _base_func = signal_func if signal_func is not None else compute_technical_signal
+            symbol_signal_funcs = {sym: _base_func for sym in price_data}
 
         from analysis.technical import atr as calc_atr
 
@@ -109,7 +138,8 @@ class BacktestEngine:
                 history = df.iloc[:date_idx + 1]
 
                 try:
-                    signal = signal_func(history)
+                    sig_fn = symbol_signal_funcs.get(sym, compute_technical_signal)
+                    signal = sig_fn(history)
                 except Exception:
                     logger.warning("Signal computation failed for %s on %s", sym, str(date)[:10])
                     continue
@@ -179,7 +209,13 @@ class BacktestEngine:
         metrics["trades"] = trades
 
         # Buy & Hold benchmark
-        metrics["benchmark"] = self._compute_benchmark(price_data, all_dates)
+        benchmark = self._compute_benchmark(price_data, all_dates)
+        metrics["benchmark"] = benchmark
+
+        # Information ratio vs benchmark
+        metrics["information_ratio"] = self._compute_information_ratio(
+            equity_curve, benchmark
+        )
 
         return metrics
 
@@ -222,17 +258,66 @@ class BacktestEngine:
         gross_loss = abs(sum(p for p in pnl_values if p < 0))
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
 
+        # ── Sortino ratio (downside deviation) ───────────────────────
+        if len(daily_returns) > 0:
+            downside = daily_returns[daily_returns < 0]
+            downside_std = float(np.std(downside)) if len(downside) > 0 else 0.0
+            if downside_std > 1e-12:
+                sortino = float(
+                    (np.mean(daily_returns) - 0.04 / 252) / downside_std * np.sqrt(252)
+                )
+            elif np.std(daily_returns) > 1e-12:
+                sortino = float(sharpe)  # No downside: mirror Sharpe
+            else:
+                sortino = 0.0
+        else:
+            sortino = 0.0
+
+        # ── Calmar ratio (annual return / max drawdown) ───────────────
+        calmar = round(annual_return / max_dd, 4) if max_dd > 1e-6 else 0.0
+
+        # ── VaR and CVaR at 95 % confidence (daily returns) ──────────
+        if len(daily_returns) > 0:
+            var_95 = float(np.percentile(daily_returns, 5))
+            tail = daily_returns[daily_returns <= var_95]
+            cvar_95 = float(np.mean(tail)) if len(tail) > 0 else var_95
+        else:
+            var_95 = 0.0
+            cvar_95 = 0.0
+
         return {
-            "total_return": round(total_return, 4),
-            "annual_return": round(annual_return, 4),
-            "sharpe_ratio": round(float(sharpe), 4),
-            "max_drawdown": round(max_dd, 4),
-            "win_rate": round(win_rate, 4),
-            "total_trades": total_closed,
-            "profit_factor": round(profit_factor, 4),
-            "final_value": round(final, 2),
-            "initial_value": round(initial, 2),
+            "total_return":   round(total_return, 4),
+            "annual_return":  round(annual_return, 4),
+            "sharpe_ratio":   round(float(sharpe), 4),
+            "sortino_ratio":  round(sortino, 4),
+            "calmar_ratio":   round(calmar, 4),
+            "max_drawdown":   round(max_dd, 4),
+            "var_95":         round(var_95, 6),
+            "cvar_95":        round(cvar_95, 6),
+            "win_rate":       round(win_rate, 4),
+            "total_trades":   total_closed,
+            "profit_factor":  round(profit_factor, 4),
+            "final_value":    round(final, 2),
+            "initial_value":  round(initial, 2),
         }
+
+    def _compute_information_ratio(
+        self, equity_curve: list, benchmark: list
+    ) -> float:
+        """Annualised Information Ratio: excess return / tracking error."""
+        n = min(len(equity_curve), len(benchmark))
+        if n < 2:
+            return 0.0
+        eq = np.array(equity_curve[:n], dtype=float)
+        bm = np.array(benchmark[:n], dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            strat_ret = np.where(eq[:-1] > 0, np.diff(eq) / eq[:-1], 0.0)
+            bench_ret = np.where(bm[:-1] > 0, np.diff(bm) / bm[:-1], 0.0)
+        excess = strat_ret - bench_ret
+        te = float(np.std(excess))
+        if te < 1e-12:
+            return 0.0
+        return round(float(np.mean(excess) / te * np.sqrt(252)), 4)
 
     def _compute_benchmark(self, price_data: dict, dates: list) -> list:
         """Equal-weight buy & hold benchmark."""

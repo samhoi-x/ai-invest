@@ -8,7 +8,8 @@ from pathlib import Path
 from datetime import datetime
 
 from config import ML_PARAMS, MODELS_DIR
-from analysis.feature_engine import prepare_xgboost_data, prepare_lstm_data
+from analysis.feature_engine import (prepare_xgboost_data, prepare_lstm_data,
+                                     prepare_transformer_data)
 
 logger = logging.getLogger(__name__)
 
@@ -432,6 +433,205 @@ class LightGBMPredictor:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Transformer Multi-Horizon Predictor
+# ══════════════════════════════════════════════════════════════════════
+
+class TransformerPredictor:
+    """Lightweight Transformer for multi-horizon time-series forecasting.
+
+    Simultaneously predicts 1d, 5d, and 10d forward returns and uses
+    conformal prediction residuals to estimate prediction uncertainty.
+    """
+
+    def __init__(self):
+        self.model = None
+        self.feature_names = None
+        self.trained_at = None
+        self._device = None
+        self._horizons = tuple(ML_PARAMS.get("predict_horizons", [1, 5, 10]))
+        self._horizon_weights = ML_PARAMS.get("horizon_weights", [0.20, 0.50, 0.30])
+        self._cal_residuals: np.ndarray | None = None   # conformal calibration
+
+    def _build_model(self, n_features: int, d_model: int = 64, nhead: int = 4,
+                     num_layers: int = 2):
+        import torch
+        import torch.nn as nn
+
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        n_out = len(self._horizons)
+
+        class _PosEnc(nn.Module):
+            def __init__(self, d, max_len=200):
+                super().__init__()
+                pe = torch.zeros(max_len, d)
+                pos = torch.arange(0, max_len).unsqueeze(1).float()
+                div = torch.exp(
+                    torch.arange(0, d, 2).float() * (-np.log(10000.0) / d))
+                pe[:, 0::2] = torch.sin(pos * div)
+                pe[:, 1::2] = torch.cos(pos * div)
+                self.register_buffer("pe", pe.unsqueeze(0))
+
+            def forward(self, x):
+                return x + self.pe[:, :x.size(1), :]
+
+        class _TSTransformer(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.proj = nn.Linear(n_features, d_model)
+                self.pos  = _PosEnc(d_model)
+                enc_layer = nn.TransformerEncoderLayer(
+                    d_model=d_model, nhead=nhead,
+                    dim_feedforward=d_model * 4, dropout=0.10,
+                    batch_first=True, norm_first=True,
+                )
+                self.enc  = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+                self.norm = nn.LayerNorm(d_model)
+                self.head = nn.Sequential(
+                    nn.Linear(d_model, 32), nn.GELU(), nn.Dropout(0.10),
+                    nn.Linear(32, n_out), nn.Tanh(),
+                )
+
+            def forward(self, x):
+                x = self.proj(x)
+                x = self.pos(x)
+                x = self.enc(x)
+                x = self.norm(x[:, -1, :])   # CLS-style: last token
+                return self.head(x)
+
+        self.model = _TSTransformer().to(self._device)
+        return self.model
+
+    def train(self, df: pd.DataFrame, epochs: int = 60) -> dict:
+        import torch
+        import torch.nn as nn
+        from torch.utils.data import TensorDataset, DataLoader
+
+        X, y, feature_names = prepare_transformer_data(df)
+        if len(X) < 80:
+            return {"error": "Insufficient data for Transformer training"}
+
+        self.feature_names = feature_names
+        split = int(len(X) * 0.80)
+        X_tr, X_cal = X[:split], X[split:]
+        y_tr, y_cal = y[:split], y[split:]
+
+        self._build_model(X.shape[2])
+        dev = self._device
+
+        X_tr_t  = torch.FloatTensor(X_tr).to(dev)
+        y_tr_t  = torch.FloatTensor(y_tr).to(dev)
+        X_cal_t = torch.FloatTensor(X_cal).to(dev)
+
+        loader = DataLoader(TensorDataset(X_tr_t, y_tr_t),
+                            batch_size=32, shuffle=False)
+        optim  = torch.optim.Adam(self.model.parameters(), lr=5e-4,
+                                  weight_decay=1e-4)
+        sched  = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=epochs)
+        crit   = nn.HuberLoss()
+
+        best_cal_loss = float("inf")
+        for _ in range(epochs):
+            self.model.train()
+            for bx, by in loader:
+                optim.zero_grad()
+                loss = crit(self.model(bx), by)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                optim.step()
+            sched.step()
+
+        # ── Conformal calibration ──────────────────────────────────────
+        self.model.eval()
+        with torch.no_grad():
+            cal_pred = self.model(X_cal_t).cpu().numpy()
+        # Use 5-day horizon (index 1) residuals for interval estimation
+        self._cal_residuals = np.abs(y_cal[:, 1] - cal_pred[:, 1])
+        cal_loss = float(np.mean(self._cal_residuals))
+
+        self.trained_at = datetime.now().isoformat()
+        return {
+            "cal_mae_5d": round(cal_loss, 6),
+            "n_samples":  len(X),
+            "n_features": X.shape[2],
+            "horizons":   list(self._horizons),
+            "trained_at": self.trained_at,
+        }
+
+    def predict(self, df: pd.DataFrame) -> dict:
+        import torch
+
+        if self.model is None:
+            return {"error": "Model not trained"}
+
+        X, _, _ = prepare_transformer_data(df)
+        if len(X) == 0:
+            return {"error": "Could not prepare Transformer features"}
+
+        self.model.eval()
+        dev = self._device or torch.device("cpu")
+        X_t = torch.FloatTensor(X[-1:]).to(dev)
+        with torch.no_grad():
+            preds = self.model(X_t).cpu().numpy()[0]   # shape: (n_horizons,)
+
+        # Blend multi-horizon predictions
+        hw = self._horizon_weights
+        total_w = sum(hw)
+        composite = sum(preds[i] * hw[i] for i in range(len(preds))) / total_w
+
+        # ── Conformal confidence ───────────────────────────────────────
+        alpha = ML_PARAMS.get("conformal_alpha", 0.20)
+        if self._cal_residuals is not None and len(self._cal_residuals) > 0:
+            q = float(np.quantile(self._cal_residuals, 1 - alpha))
+            # Narrow interval (q small) → high confidence; wide → low
+            uncertainty = float(np.clip(q * 5, 0.0, 1.0))
+            confidence  = round(1.0 - uncertainty, 4)
+        else:
+            confidence = round(float(abs(composite)), 4)
+
+        return {
+            "signal_score": round(float(np.clip(composite, -1, 1)), 4),
+            "confidence":   max(0.0, min(1.0, confidence)),
+            "horizon_preds": {
+                f"{h}d": round(float(preds[i]), 4)
+                for i, h in enumerate(self._horizons)
+            },
+        }
+
+    def save(self, symbol: str):
+        import torch
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        path = MODELS_DIR / f"trf_{symbol.replace('/', '_')}.pt"
+        torch.save({
+            "model_state":    self.model.state_dict() if self.model else None,
+            "features":       self.feature_names,
+            "trained_at":     self.trained_at,
+            "n_features":     len(self.feature_names) if self.feature_names else 0,
+            "cal_residuals":  self._cal_residuals,
+            "horizons":       self._horizons,
+            "horizon_weights": self._horizon_weights,
+        }, path)
+
+    def load(self, symbol: str) -> bool:
+        import torch
+        path = MODELS_DIR / f"trf_{symbol.replace('/', '_')}.pt"
+        if not path.exists():
+            return False
+        data = torch.load(path, map_location="cpu", weights_only=False)
+        self.feature_names    = data.get("features", [])
+        self.trained_at       = data.get("trained_at")
+        self._cal_residuals   = data.get("cal_residuals")
+        self._horizons        = data.get("horizons", self._horizons)
+        self._horizon_weights = data.get("horizon_weights", self._horizon_weights)
+        n_features = data.get("n_features", 0)
+        if n_features > 0 and data.get("model_state"):
+            self._build_model(n_features)
+            self.model.load_state_dict(data["model_state"])
+            self.model.eval()
+            return True
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  Unified ML Signal
 # ══════════════════════════════════════════════════════════════════════
 
@@ -481,31 +681,42 @@ def _load_train_predict(predictor, symbol, df, train_if_needed):
 
 def compute_ml_signal(df: pd.DataFrame, symbol: str,
                       train_if_needed: bool = True) -> dict:
-    """Compute combined ML signal from XGBoost, LightGBM, and LSTM.
+    """Compute combined ML signal from XGBoost, LightGBM, LSTM, and Transformer.
 
-    Returns dict with 'score' (-1 to +1), 'confidence', and model details.
+    Returns dict with 'score' (-1 to +1), 'confidence', and per-model details.
     """
     xgb_result  = _load_train_predict(_get_predictor(XGBoostPredictor,  symbol), symbol, df, train_if_needed)
     lgb_result  = _load_train_predict(_get_predictor(LightGBMPredictor, symbol), symbol, df, train_if_needed)
     lstm_result = _load_train_predict(_get_predictor(LSTMPredictor,     symbol), symbol, df, train_if_needed)
+    trf_result  = _load_train_predict(_get_predictor(TransformerPredictor, symbol), symbol, df, train_if_needed)
 
-    # Weighted combination
     xgb_w = ML_PARAMS["xgboost_weight"]
     lgb_w = ML_PARAMS["lightgbm_weight"]
     lstm_w = ML_PARAMS["lstm_weight"]
+    trf_w  = ML_PARAMS.get("transformer_weight", 0.30)
 
-    composite = (xgb_w * xgb_result.get("signal_score", 0)
-                 + lgb_w * lgb_result.get("signal_score", 0)
-                 + lstm_w * lstm_result.get("signal_score", 0))
+    # Normalise weights in case they don't sum to exactly 1
+    total_w = xgb_w + lgb_w + lstm_w + trf_w
 
-    confidence = (xgb_w * xgb_result.get("confidence", 0)
-                  + lgb_w * lgb_result.get("confidence", 0)
-                  + lstm_w * lstm_result.get("confidence", 0))
+    composite = (
+        xgb_w  * xgb_result.get("signal_score", 0)
+        + lgb_w  * lgb_result.get("signal_score", 0)
+        + lstm_w * lstm_result.get("signal_score", 0)
+        + trf_w  * trf_result.get("signal_score",  0)
+    ) / total_w
+
+    confidence = (
+        xgb_w  * xgb_result.get("confidence", 0)
+        + lgb_w  * lgb_result.get("confidence", 0)
+        + lstm_w * lstm_result.get("confidence", 0)
+        + trf_w  * trf_result.get("confidence",  0)
+    ) / total_w
 
     return {
-        "score": round(float(np.clip(composite, -1, 1)), 4),
-        "confidence": round(float(min(1.0, confidence)), 4),
-        "xgboost": xgb_result,
-        "lightgbm": lgb_result,
-        "lstm": lstm_result,
+        "score":       round(float(np.clip(composite, -1, 1)), 4),
+        "confidence":  round(float(min(1.0, confidence)), 4),
+        "xgboost":     xgb_result,
+        "lightgbm":    lgb_result,
+        "lstm":        lstm_result,
+        "transformer": trf_result,
     }
